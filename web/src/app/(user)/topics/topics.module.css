@@ -1,0 +1,92 @@
+.filters {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+
+.topicGrid {
+  display: grid;
+  gap: 12px;
+}
+
+.topicCard {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  text-decoration: none;
+  transition: all 0.2s ease;
+  animation: fadeIn 0.4s ease both;
+}
+
+.topicCard:hover {
+  border-color: var(--primary-200);
+  box-shadow: var(--shadow-md);
+  transform: translateX(4px);
+}
+
+[data-theme="dark"] .topicCard:hover {
+  border-color: var(--primary-800);
+}
+
+.topicIcon {
+  font-size: 36px;
+  width: 60px;
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius);
+  flex-shrink: 0;
+}
+
+.topicContent {
+  flex: 1;
+  min-width: 0;
+}
+
+.topicContent h3 {
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.topicDesc {
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin-bottom: 8px;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.topicMeta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.convCount {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.topicArrow {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.topicCard:hover .topicArrow {
+  transform: translateX(4px);
+  color: var(--primary);
+}

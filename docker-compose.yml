@@ -1,0 +1,41 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: onlyspeak
+      POSTGRES_USER: onlyspeak
+      POSTGRES_PASSWORD: onlyspeak
+    ports:
+      - "5432:5432"
+
+  api:
+    build: ./backend
+    restart: unless-stopped
+    volumes:
+      - ./backend:/app
+      - ./backend/static:/app/static
+    environment:
+      DATABASE_URL: postgresql+asyncpg://onlyspeak:onlyspeak@db:5432/onlyspeak
+      SECRET_KEY: dev-secret-key-change-in-production
+      DEBUG: "true"
+      CORS_ORIGINS: '["http://localhost:3000"]'
+    ports:
+      - "5000:5000"
+    depends_on:
+      - db
+
+  web:
+    build: ./web
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:5000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
