@@ -15,10 +15,13 @@ async def generate_audio(text: str, voice: str, filename: str = None) -> str:
 
     filepath = os.path.join(settings.AUDIO_DIR, filename)
 
-    communicate = edge_tts.Communicate(text, voice)
-    await communicate.save(filepath)
-
-    return f"/static/audio/{filename}"
+    try:
+        communicate = edge_tts.Communicate(text, voice)
+        await communicate.save(filepath)
+        return f"/static/audio/{filename}"
+    except Exception as e:
+        print(f"Warning: Failed to generate TTS audio using edge-tts for '{text[:20]}...': {e}")
+        return None
 
 
 async def generate_conversation_audio(
