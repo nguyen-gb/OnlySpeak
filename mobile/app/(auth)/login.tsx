@@ -20,7 +20,7 @@ export default function LoginScreen() {
     setError('');
     try {
       await login(email, password);
-      router.replace('/(tabs)/topics');
+      router.replace('/(tabs)/dashboard');
     } catch (err: any) {
       setError(err.message || 'Failed to login');
     } finally {

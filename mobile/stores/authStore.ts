@@ -8,6 +8,8 @@ interface User {
   full_name: string;
   role: string;
   avatar_url?: string;
+  streak_count?: number;
+  total_xp?: number;
 }
 
 interface AuthState {
@@ -27,19 +29,18 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   login: async (email, password) => {
     try {
-      const formData = new FormData();
-      formData.append('username', email);
-      formData.append('password', password);
-
-      const res = await api.post('/api/auth/token', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
+      const res = await api.post('/api/auth/login', {
+        email,
+        password,
       });
 
-      const { access_token } = res.data;
+      const { access_token, refresh_token, user } = res.data;
       await AsyncStorage.setItem('token', access_token);
-      
-      const userRes = await api.get('/api/auth/me');
-      set({ user: userRes.data, isAuthenticated: true });
+      if (refresh_token) {
+        await AsyncStorage.setItem('refresh_token', refresh_token);
+      }
+
+      set({ user, isAuthenticated: true, isLoading: false });
     } catch (error: any) {
       throw new Error(error.response?.data?.detail || 'Login failed');
     }
@@ -53,11 +54,13 @@ export const useAuthStore = create<AuthState>((set) => ({
         full_name: fullName,
       });
 
-      const { access_token } = res.data;
+      const { access_token, refresh_token, user } = res.data;
       await AsyncStorage.setItem('token', access_token);
-      
-      const userRes = await api.get('/api/auth/me');
-      set({ user: userRes.data, isAuthenticated: true });
+      if (refresh_token) {
+        await AsyncStorage.setItem('refresh_token', refresh_token);
+      }
+
+      set({ user, isAuthenticated: true, isLoading: false });
     } catch (error: any) {
       throw new Error(error.response?.data?.detail || 'Registration failed');
     }
@@ -65,6 +68,7 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   logout: async () => {
     await AsyncStorage.removeItem('token');
+    await AsyncStorage.removeItem('refresh_token');
     set({ user: null, isAuthenticated: false });
   },
 

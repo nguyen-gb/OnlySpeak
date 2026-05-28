@@ -1,17 +1,15 @@
 import { useEffect, useState } from 'react';
 import { Redirect } from 'expo-router';
 import { View, ActivityIndicator } from 'react-native';
+import { useAuthStore } from '../stores/authStore';
 
 export default function Index() {
   const [isReady, setIsReady] = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const { isAuthenticated, loadUser } = useAuthStore();
 
   useEffect(() => {
-    // Simulate checking auth token from AsyncStorage
-    setTimeout(() => {
-      setIsReady(true);
-    }, 500);
-  }, []);
+    loadUser().finally(() => setIsReady(true));
+  }, [loadUser]);
 
   if (!isReady) {
     return (
@@ -22,7 +20,7 @@ export default function Index() {
   }
 
   if (isAuthenticated) {
-    return <Redirect href="/(tabs)/topics" />;
+    return <Redirect href="/(tabs)/dashboard" />;
   } else {
     return <Redirect href="/(auth)/login" />;
   }

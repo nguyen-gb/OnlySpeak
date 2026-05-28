@@ -1,5 +1,5 @@
 import { Tabs } from 'expo-router';
-import { BookOpen, History, User } from 'lucide-react-native';
+import { BookOpen, History, LayoutDashboard, User } from 'lucide-react-native';
 
 export default function TabLayout() {
   return (
@@ -12,6 +12,13 @@ export default function TabLayout() {
           fontWeight: 'bold',
         },
       }}>
+      <Tabs.Screen
+        name="dashboard"
+        options={{
+          title: 'Dashboard',
+          tabBarIcon: ({ color }) => <LayoutDashboard size={24} color={color} />,
+        }}
+      />
       <Tabs.Screen
         name="topics"
         options={{

@@ -21,7 +21,7 @@ export default function RegisterScreen() {
     setError('');
     try {
       await register(email, password, fullName);
-      router.replace('/(tabs)/topics');
+      router.replace('/(tabs)/dashboard');
     } catch (err: any) {
       setError(err.message || 'Failed to register');
     } finally {

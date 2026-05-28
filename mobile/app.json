@@ -13,7 +13,11 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "OnlySpeak uses your microphone for speaking practice.",
+        "NSSpeechRecognitionUsageDescription": "OnlySpeak uses speech recognition to score your pronunciation."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -21,13 +25,23 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Allow OnlySpeak to access your microphone for speaking practice.",
+          "speechRecognitionPermission": "Allow OnlySpeak to recognize your speech for pronunciation scoring."
+        }
+      ]
     ]
   }
 }
