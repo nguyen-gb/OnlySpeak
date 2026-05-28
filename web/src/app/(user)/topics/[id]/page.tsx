@@ -39,8 +39,19 @@ interface MasteryData {
     best?: number;
     streak?: number;
     success_count?: number;
+    role_success_counts?: Record<string, number>;
     passed?: boolean;
   }>;
+}
+
+const ROLE_SUCCESS_CAP = 2;
+
+function getRoleProgress(modeData?: { role_success_counts?: Record<string, number> }) {
+  const roleCounts = modeData?.role_success_counts || {};
+  return {
+    a: Math.min(roleCounts.A || 0, ROLE_SUCCESS_CAP),
+    b: Math.min(roleCounts.B || 0, ROLE_SUCCESS_CAP),
+  };
 }
 
 function getMasteryLabel(level: number) {
@@ -64,9 +75,9 @@ export default function TopicDetailPage() {
         api.getTopic(params.id as string),
         api.getMasteryMap().catch(() => ({})),
       ])
-        .then(([topicData, mastery]: [any, any]) => {
+        .then(([topicData, mastery]: [unknown, unknown]) => {
           setData(topicData as TopicData);
-          setMasteryMap(mastery || {});
+          setMasteryMap((mastery as Record<string, MasteryData>) || {});
         })
         .catch(console.error)
         .finally(() => setLoading(false));
@@ -199,9 +210,16 @@ export default function TopicDetailPage() {
                           const successCount = modeData?.success_count || 0;
                           const required = currentMode === 4 ? 5 : 3;
                           const remaining = Math.max(0, required - successCount);
+                          const roleProgress = currentMode < 4 ? getRoleProgress(modeData) : null;
                           return (
                             <span className={styles.masteryHint}>
                               Need {remaining} more perfect sessions (≥90%) in Mode {currentMode}
+                              {roleProgress && (
+                                <span className={styles.roleProgressInline}>
+                                  <span className={roleProgress.a > 0 ? styles.roleActive : styles.roleInactive}>Role A</span>
+                                  <span className={roleProgress.b > 0 ? styles.roleActive : styles.roleInactive}>Role B</span>
+                                </span>
+                              )}
                             </span>
                           );
                         })()}

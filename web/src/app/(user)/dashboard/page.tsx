@@ -36,7 +36,20 @@ interface Stats {
   total_mastered: number;
   overall_mastery: number;
   due_for_review: number;
-  recent_progress: any[];
+  recent_progress: RecentProgress[];
+}
+
+interface RecentProgress {
+  id: string;
+  conversation_id: string;
+  conversation_title?: string;
+  conversation_situation?: string;
+  role_played: string;
+  current_mode: number;
+  mastery_level?: number;
+  avg_response_time?: number;
+  is_completed: boolean;
+  last_practiced_at: string;
 }
 
 function getMasteryLabel(level: number) {
@@ -69,6 +82,8 @@ export default function DashboardPage() {
 
   const overallMastery = stats?.overall_mastery || 0;
   const masteryInfo = getMasteryLabel(overallMastery);
+  const streakCount = user?.streak_count || 0;
+  const totalXp = user?.total_xp || 0;
 
   return (
     <div className="animate-fade-in">
@@ -80,12 +95,12 @@ export default function DashboardPage() {
           <div className={styles.userStatusRow}>
              <div className={styles.streakBadge}>
                 <Flame size={16} fill="currentColor" />
-                <span>{(user as any)?.streak_count || 0} Day Streak</span>
+                <span>{streakCount} Day Streak</span>
              </div>
              <div className={styles.levelBadge}>
                 <Zap size={16} fill="currentColor" />
-                <span>Level {Math.floor(((user as any)?.total_xp || 0) / 100) + 1}</span>
-                <small>({(user as any)?.total_xp || 0} XP)</small>
+                <span>Level {Math.floor(totalXp / 100) + 1}</span>
+                <small>({totalXp} XP)</small>
              </div>
           </div>
           <p className={styles.welcomeDesc}>
@@ -207,11 +222,14 @@ export default function DashboardPage() {
         <div className={styles.recent}>
           <h2>Recent History</h2>
           <div className={styles.recentList}>
-            {stats.recent_progress.slice(0, 5).map((p: any) => {
+            {stats.recent_progress.slice(0, 5).map((p) => {
               const mInfo = getMasteryLabel(p.mastery_level || 0);
               return (
-                <div key={p.id} className={styles.recentItem}>
+                <Link key={p.id} href={`/practice/${p.conversation_id}`} className={styles.recentItem}>
                   <div className={styles.recentInfo}>
+                    <span className={styles.recentTitle}>
+                      {p.conversation_title || `Conversation ${String(p.conversation_id).slice(0, 8)}`}
+                    </span>
                     <span className={styles.recentRole}>Role {p.role_played} (Mode {p.current_mode})</span>
                     <span className={styles.recentDate}>
                       {new Date(p.last_practiced_at).toLocaleDateString()}
@@ -231,7 +249,7 @@ export default function DashboardPage() {
                       {p.is_completed ? 'Completed' : 'Partial'}
                     </span>
                   </div>
-                </div>
+                </Link>
               );
             })}
           </div>

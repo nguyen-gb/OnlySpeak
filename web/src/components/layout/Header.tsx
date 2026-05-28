@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
 import { useAuthStore } from "@/stores/authStore";
@@ -9,7 +10,6 @@ import {
   Moon,
   LogOut,
   User,
-  MessageCircle,
 } from "lucide-react";
 import styles from "./Header.module.css";
 
@@ -25,9 +25,13 @@ export default function Header() {
       <div className={styles.inner}>
         <Link href={user ? "/dashboard" : "/"} className={styles.logo}>
           <div className={styles.logoIcon}>
-            <MessageCircle size={22} />
+            <Image src="/logo.png" alt="OnlySpeak logo" width={36} height={36} className={styles.logoImage} priority />
+            <Image src="/logo-dark.png" alt="" width={36} height={36} className={`${styles.logoImage} ${styles.logoImageDark}`} priority aria-hidden="true" />
           </div>
-          <span className={styles.logoText}>OnlySpeak</span>
+          <span className={styles.logoText}>
+            <span className={styles.logoTextOnly}>Only</span>
+            <span className={styles.logoTextSpeak}>Speak</span>
+          </span>
         </Link>
 
         <nav className={styles.nav}>
@@ -105,7 +109,7 @@ export default function Header() {
             <div className={styles.userMenu}>
               <div className={styles.avatar}>
                 {user.avatar_url ? (
-                  <img src={user.avatar_url} alt={user.full_name} />
+                  <Image src={user.avatar_url} alt={user.full_name} width={32} height={32} />
                 ) : (
                   <User size={18} />
                 )}

@@ -38,20 +38,48 @@
   width: 36px;
   height: 36px;
   border-radius: 10px;
-  background: linear-gradient(135deg, var(--primary), var(--primary-dark));
-  color: white;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-card);
+  box-shadow: var(--shadow-sm);
+}
+
+.logoImage {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.logoImageDark {
+  opacity: 0;
+}
+
+[data-theme="dark"] .logoImage {
+  opacity: 0;
+}
+
+[data-theme="dark"] .logoImageDark {
+  opacity: 1;
 }
 
 .logoText {
   font-size: 20px;
   font-weight: 800;
-  background: linear-gradient(135deg, var(--primary), var(--primary-dark));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  letter-spacing: 0;
+}
+
+.logoTextOnly {
+  color: var(--primary);
+}
+
+.logoTextSpeak {
+  color: #0f172a;
+}
+
+[data-theme="dark"] .logoTextSpeak {
+  color: #ffffff;
 }
 
 .headerActions {

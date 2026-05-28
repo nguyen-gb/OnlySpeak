@@ -1,12 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useTheme } from "next-themes";
 import {
-  MessageCircle,
   Mic,
   Users,
-  BarChart3,
   ArrowRight,
   Sun,
   Moon,
@@ -26,9 +25,13 @@ export default function LandingPage() {
         <div className={styles.headerInner}>
           <div className={styles.logo}>
             <div className={styles.logoIcon}>
-              <MessageCircle size={22} />
+              <Image src="/logo.png" alt="OnlySpeak logo" width={36} height={36} className={styles.logoImage} priority />
+              <Image src="/logo-dark.png" alt="" width={36} height={36} className={`${styles.logoImage} ${styles.logoImageDark}`} priority aria-hidden="true" />
             </div>
-            <span className={styles.logoText}>OnlySpeak</span>
+            <span className={styles.logoText}>
+              <span className={styles.logoTextOnly}>Only</span>
+              <span className={styles.logoTextSpeak}>Speak</span>
+            </span>
           </div>
           <div className={styles.headerActions}>
             <button
@@ -40,7 +43,7 @@ export default function LandingPage() {
             <Link href="/login" className="btn btn-sm btn-ghost">
               Sign In
             </Link>
-            <Link href="/register" className="btn btn-sm btn-primary">
+            <Link href="/login" className="btn btn-sm btn-primary">
               Get Started
             </Link>
           </div>
@@ -66,12 +69,9 @@ export default function LandingPage() {
             pronunciation feedback — all for free.
           </p>
           <div className={styles.heroCta}>
-            <Link href="/register" className="btn btn-lg btn-primary">
+            <Link href="/login" className="btn btn-lg btn-primary">
               Start Speaking Now
               <ArrowRight size={18} />
-            </Link>
-            <Link href="/login" className="btn btn-lg btn-secondary">
-              I have an account
             </Link>
           </div>
         </div>
@@ -181,9 +181,13 @@ export default function LandingPage() {
         <div className={styles.footerInner}>
           <div className={styles.logo}>
             <div className={styles.logoIcon}>
-              <MessageCircle size={18} />
+              <Image src="/logo.png" alt="OnlySpeak logo" width={32} height={32} className={styles.logoImage} />
+              <Image src="/logo-dark.png" alt="" width={32} height={32} className={`${styles.logoImage} ${styles.logoImageDark}`} aria-hidden="true" />
             </div>
-            <span className={styles.logoText}>OnlySpeak</span>
+            <span className={styles.logoText}>
+              <span className={styles.logoTextOnly}>Only</span>
+              <span className={styles.logoTextSpeak}>Speak</span>
+            </span>
           </div>
           <p>Learn English by speaking. Free forever.</p>
         </div>

@@ -149,8 +149,15 @@ export default function DashboardScreen() {
             renderItem={({ item }) => {
               const info = getMasteryLabel(item.mastery_level || 0);
               return (
-                <View style={styles.recentItem}>
+                <TouchableOpacity
+                  style={styles.recentItem}
+                  onPress={() => router.push(`/practice/${item.conversation_id}`)}
+                  activeOpacity={0.8}
+                >
                   <View>
+                    <Text style={styles.recentTitle} numberOfLines={2}>
+                      {item.conversation_title || `Conversation ${String(item.conversation_id).slice(0, 8)}`}
+                    </Text>
                     <Text style={styles.recentRole}>Role {item.role_played} · Mode {item.current_mode || 1}</Text>
                     <Text style={styles.recentDate}>{new Date(item.last_practiced_at).toLocaleDateString()}</Text>
                   </View>
@@ -158,7 +165,7 @@ export default function DashboardScreen() {
                     <Text style={[styles.recentMastery, { color: info.color }]}>{info.text} {(item.mastery_level || 0).toFixed(0)}%</Text>
                     <Text style={styles.recentStatus}>{item.is_completed ? 'Completed' : 'Partial'}</Text>
                   </View>
-                </View>
+                </TouchableOpacity>
               );
             }}
           />
@@ -211,7 +218,8 @@ const styles = StyleSheet.create({
   masteryPercent: { color: '#0f172a', fontWeight: '900', marginTop: 8, textAlign: 'right' },
   hint: { color: '#64748b', marginTop: 8, fontSize: 13 },
   recentItem: { flexDirection: 'row', justifyContent: 'space-between', gap: 12, paddingVertical: 12, borderTopWidth: 1, borderTopColor: '#f1f5f9' },
-  recentRole: { color: '#0f172a', fontWeight: '800' },
+  recentTitle: { color: '#0f172a', fontWeight: '900', maxWidth: 190 },
+  recentRole: { color: '#64748b', fontWeight: '800', marginTop: 3 },
   recentDate: { color: '#64748b', marginTop: 4, fontSize: 13 },
   recentMastery: { fontWeight: '800', fontSize: 13 },
   recentStatus: { color: '#64748b', marginTop: 4, fontSize: 12 },

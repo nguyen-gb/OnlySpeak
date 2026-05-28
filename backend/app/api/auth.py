@@ -5,16 +5,12 @@ from sqlalchemy import select
 from app.database import get_db
 from app.models.user import User, AuthProvider
 from app.schemas.user import (
-    UserCreate,
-    UserLogin,
     GoogleLogin,
     TokenResponse,
     UserResponse,
     UserUpdate,
 )
 from app.services.auth_service import (
-    hash_password,
-    verify_password,
     create_access_token,
     create_refresh_token,
     verify_token,
@@ -42,47 +38,18 @@ def _user_response(user: User) -> UserResponse:
 
 
 @router.post("/register", response_model=TokenResponse)
-async def register(data: UserCreate, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.email == data.email))
-    if result.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Email already registered")
-
-    user = User(
-        email=data.email,
-        password_hash=hash_password(data.password),
-        full_name=data.full_name,
-        provider=AuthProvider.LOCAL,
-    )
-    db.add(user)
-    await db.commit()
-    await db.refresh(user)
-
-    return TokenResponse(
-        access_token=create_access_token({"sub": str(user.id)}),
-        refresh_token=create_refresh_token({"sub": str(user.id)}),
-        user=_user_response(user),
+async def register():
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="Email registration is disabled. Please sign in with Google.",
     )
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(data: UserLogin, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.email == data.email))
-    user = result.scalar_one_or_none()
-
-    if (
-        not user
-        or not user.password_hash
-        or not verify_password(data.password, user.password_hash)
-    ):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-
-    if not user.is_active:
-        raise HTTPException(status_code=403, detail="Account disabled")
-
-    return TokenResponse(
-        access_token=create_access_token({"sub": str(user.id)}),
-        refresh_token=create_refresh_token({"sub": str(user.id)}),
-        user=_user_response(user),
+async def login():
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="Email login is disabled. Please sign in with Google.",
     )
 
 
@@ -106,6 +73,13 @@ async def google_login(data: GoogleLogin, db: AsyncSession = Depends(get_db)):
             provider_id=google_data["sub"],
         )
         db.add(user)
+        await db.commit()
+        await db.refresh(user)
+    elif not user.is_active:
+        raise HTTPException(status_code=403, detail="Account disabled")
+    else:
+        user.avatar_url = google_data.get("picture") or user.avatar_url
+        user.provider_id = user.provider_id or google_data["sub"]
         await db.commit()
         await db.refresh(user)
 

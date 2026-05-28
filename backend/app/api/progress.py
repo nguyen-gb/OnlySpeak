@@ -9,6 +9,7 @@ from app.database import get_db
 from app.api.deps import get_current_user
 from app.models.user import User
 from app.models.progress import UserProgress
+from app.models.conversation import Conversation
 from app.schemas.progress import ProgressCreate, ProgressResponse, ProgressStatsResponse
 
 router = APIRouter(prefix="/api/progress", tags=["progress"])
@@ -27,6 +28,15 @@ MODE_UNLOCK_RULES = {
     4: {"score": 90, "successes": 5, "response_time": 3.0},  # Speed Talker
 }
 FLUENT_REVIEW_WINDOW_DAYS = 30
+ROLE_SUCCESS_CAP_FOR_THREE_SUCCESS_MODES = 2
+
+
+def _role_key(role: str | None) -> str | None:
+    if not role:
+        return None
+    value = getattr(role, "value", role)
+    value = str(value).upper()
+    return value if value in {"A", "B"} else None
 
 
 def _calculate_srs(score: float, interval: float, ease_factor: float) -> tuple[float, float]:
@@ -83,30 +93,56 @@ def _empty_mode_data() -> dict:
         "best": 0,
         "streak": 0,
         "success_count": 0,
+        "total_success_count": 0,
+        "role_success_counts": {"A": 0, "B": 0},
         "passed": False,
         "passed_at": None,
         "last_success_at": None,
     }
 
 
-def _normalize_mode_data(raw: dict | None, mode: int) -> dict:
+def _effective_success_count(data: dict, mode: int) -> int:
+    required = MODE_UNLOCK_RULES.get(mode, {}).get("successes", 1)
+    role_counts = data.get("role_success_counts") or {}
+    if required == 3 and role_counts:
+        return sum(
+            min(int(role_counts.get(role) or 0), ROLE_SUCCESS_CAP_FOR_THREE_SUCCESS_MODES)
+            for role in ("A", "B")
+        )
+    return int(data.get("total_success_count") or data.get("success_count") or 0)
+
+
+def _normalize_mode_data(raw: dict | None, mode: int, role_played: str | None = None) -> dict:
     data = _empty_mode_data()
     if raw:
         data.update(raw)
 
     data["best"] = float(data.get("best") or 0)
     data["streak"] = int(data.get("streak") or 0)
-    data["success_count"] = int(data.get("success_count") or 0)
+    legacy_success_count = int(data.get("success_count") or 0)
+
+    raw_role_counts = data.get("role_success_counts") or {}
+    role_counts = {
+        "A": int(raw_role_counts.get("A") or 0),
+        "B": int(raw_role_counts.get("B") or 0),
+    }
+
+    # Older records only stored one aggregate success_count on each role-specific
+    # progress row. Attribute that legacy count to the row's role so the new
+    # cross-role unlock rule can still evaluate historical progress.
+    role_key = _role_key(role_played)
+    if role_key and not any(role_counts.values()) and legacy_success_count:
+        role_counts[role_key] = legacy_success_count
+
+    data["role_success_counts"] = role_counts
+    data["total_success_count"] = max(
+        int(data.get("total_success_count") or 0),
+        legacy_success_count,
+        sum(role_counts.values()),
+    )
+    data["success_count"] = _effective_success_count(data, mode)
 
     required = MODE_UNLOCK_RULES.get(mode, {}).get("successes", 1)
-
-    # Once passed, it stays passed forever (immutable unlock)
-    if data.get("passed") and data.get("passed_at"):
-        # Ensure success_count is at least the required amount
-        if data["success_count"] < required:
-            data["success_count"] = required
-        return data
-
     data["passed"] = data["success_count"] >= required
     return data
 
@@ -158,7 +194,7 @@ def _calculate_current_mode(mode_scores: dict, *, now: datetime | None = None) -
     return 4
 
 
-def _merge_mode_scores(base: dict, incoming: dict) -> dict:
+def _merge_mode_scores(base: dict, incoming: dict, role_played: str | None = None) -> dict:
     merged = dict(base)
     for mode_key, raw_data in (incoming or {}).items():
         try:
@@ -167,20 +203,18 @@ def _merge_mode_scores(base: dict, incoming: dict) -> dict:
             continue
 
         current = _normalize_mode_data(merged.get(mode_key), mode)
-        new = _normalize_mode_data(raw_data, mode)
+        new = _normalize_mode_data(raw_data, mode, role_played)
         current["best"] = max(current["best"], new["best"])
         current["streak"] = max(current["streak"], new["streak"])
-        # Use max() instead of sum to prevent double-counting across roles
-        current["success_count"] = max(current["success_count"], new["success_count"])
-
-        # Preserve passed state: once either role passes, mode stays passed
-        if new.get("passed") or current.get("passed"):
-            current["passed"] = True
-        else:
-            current["passed"] = (
-                current["success_count"]
-                >= MODE_UNLOCK_RULES.get(mode, {}).get("successes", 1)
-            )
+        current["total_success_count"] = int(current.get("total_success_count") or 0) + int(new.get("total_success_count") or 0)
+        current_role_counts = current.get("role_success_counts") or {}
+        new_role_counts = new.get("role_success_counts") or {}
+        current["role_success_counts"] = {
+            role: int(current_role_counts.get(role) or 0) + int(new_role_counts.get(role) or 0)
+            for role in ("A", "B")
+        }
+        current["success_count"] = _effective_success_count(current, mode)
+        current["passed"] = current["success_count"] >= MODE_UNLOCK_RULES.get(mode, {}).get("successes", 1)
 
         current_last = current.get("last_success_at")
         new_last = new.get("last_success_at")
@@ -196,11 +230,11 @@ def _merge_mode_scores(base: dict, incoming: dict) -> dict:
     return merged
 
 
-def _to_response(p: UserProgress) -> ProgressResponse:
+def _to_response(p: UserProgress, conversation: Conversation | None = None) -> ProgressResponse:
     mode_scores = {}
     for mode_key, mode_data in (p.mode_scores or {}).items():
         try:
-            mode_scores[mode_key] = _normalize_mode_data(mode_data, int(mode_key))
+            mode_scores[mode_key] = _normalize_mode_data(mode_data, int(mode_key), p.role_played.value)
         except (TypeError, ValueError):
             continue
 
@@ -208,6 +242,8 @@ def _to_response(p: UserProgress) -> ProgressResponse:
         id=p.id,
         user_id=p.user_id,
         conversation_id=p.conversation_id,
+        conversation_title=conversation.title if conversation else "",
+        conversation_situation=conversation.situation if conversation else "",
         role_played=p.role_played.value,
         completed_lines=p.completed_lines,
         total_lines=p.total_lines,
@@ -301,26 +337,29 @@ async def save_progress(
 
         mode_scores = dict(existing.mode_scores or {})
         mode_key = str(mode)
-        current_m_data = _normalize_mode_data(mode_scores.get(mode_key), mode)
+        current_m_data = _normalize_mode_data(mode_scores.get(mode_key), mode, data.role_played)
         was_passed = current_m_data["passed"]
+        role_key = _role_key(data.role_played)
 
         current_m_data["best"] = max(current_m_data["best"], score)
         if data.is_completed:
             if _session_passed_mode(mode, score, session_avg_rt):
                 current_m_data["streak"] += 1
-                current_m_data["success_count"] += 1
+                current_m_data["total_success_count"] += 1
+                if role_key:
+                    current_m_data["role_success_counts"][role_key] += 1
+                current_m_data["success_count"] = _effective_success_count(current_m_data, mode)
                 current_m_data["last_success_at"] = now.isoformat()
             else:
                 # Only reset streak on completed-but-failed, not on incomplete
                 current_m_data["streak"] = 0
         # If not completed, don't touch streak at all (preserve progress)
 
-        # Once passed, stay passed forever (immutable unlock)
-        if not was_passed:
-            current_m_data["passed"] = (
-                current_m_data["success_count"]
-                >= MODE_UNLOCK_RULES.get(mode, {}).get("successes", 1)
-            )
+        # Recalculate pass status from effective cross-role successes.
+        current_m_data["passed"] = (
+            current_m_data["success_count"]
+            >= MODE_UNLOCK_RULES.get(mode, {}).get("successes", 1)
+        )
         if current_m_data["passed"] and not was_passed:
             current_m_data["passed_at"] = now.isoformat()
         mode_scores[mode_key] = current_m_data
@@ -349,11 +388,15 @@ async def save_progress(
         streak = 1 if score >= MASTERY_THRESHOLD else 0
         history = [score] if score > 0 else []
         new_interval, new_ef = _calculate_srs(score, 0, 2.5)
-        mode_data = _normalize_mode_data(None, mode)
+        mode_data = _normalize_mode_data(None, mode, data.role_played)
+        role_key = _role_key(data.role_played)
         mode_data["best"] = score
         if data.is_completed and _session_passed_mode(mode, score, session_avg_rt):
             mode_data["streak"] = 1
-            mode_data["success_count"] = 1
+            mode_data["total_success_count"] = 1
+            if role_key:
+                mode_data["role_success_counts"][role_key] = 1
+            mode_data["success_count"] = _effective_success_count(mode_data, mode)
             mode_data["last_success_at"] = now.isoformat()
         mode_data["passed"] = (
             mode_data["success_count"]
@@ -397,13 +440,14 @@ async def get_progress(
     user: User = Depends(get_current_user),
 ):
     result = await db.execute(
-        select(UserProgress)
+        select(UserProgress, Conversation)
+        .join(Conversation, UserProgress.conversation_id == Conversation.id)
         .where(UserProgress.user_id == user.id)
         .order_by(UserProgress.last_practiced_at.desc())
         .limit(50)
     )
-    items = result.scalars().all()
-    return [_to_response(p) for p in items]
+    items = result.all()
+    return [_to_response(p, c) for p, c in items]
 
 
 @router.get("/stats", response_model=ProgressStatsResponse)
@@ -457,12 +501,13 @@ async def get_stats(
     due_count = due.scalar()
 
     recent = await db.execute(
-        select(UserProgress)
+        select(UserProgress, Conversation)
+        .join(Conversation, UserProgress.conversation_id == Conversation.id)
         .where(UserProgress.user_id == user.id)
         .order_by(UserProgress.last_practiced_at.desc())
         .limit(10)
     )
-    recent_items = recent.scalars().all()
+    recent_items = recent.all()
 
     return ProgressStatsResponse(
         total_practiced=total_practiced,
@@ -472,7 +517,7 @@ async def get_stats(
         total_mastered=total_mastered or 0,
         overall_mastery=round(overall_mastery, 1) if overall_mastery else 0.0,
         due_for_review=due_count or 0,
-        recent_progress=[_to_response(p) for p in recent_items],
+        recent_progress=[_to_response(p, c) for p, c in recent_items],
     )
 
 
@@ -512,7 +557,7 @@ async def get_mastery_map(
             if item["avg_response_time"] and p.avg_response_time
             else item["avg_response_time"] or p.avg_response_time
         )
-        item["mode_scores"] = _merge_mode_scores(item["mode_scores"], p.mode_scores or {})
+        item["mode_scores"] = _merge_mode_scores(item["mode_scores"], p.mode_scores or {}, p.role_played.value)
         item["current_mode"] = _calculate_current_mode(item["mode_scores"])
 
     return mastery_map

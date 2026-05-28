@@ -1,35 +1,69 @@
-import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
-import { Link, router } from 'expo-router';
+import React, { useEffect, useState } from 'react';
+import { ActivityIndicator, KeyboardAvoidingView, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { router } from 'expo-router';
+import * as Google from 'expo-auth-session/providers/google';
+import * as WebBrowser from 'expo-web-browser';
+import { MessageCircle } from 'lucide-react-native';
 import { useAuthStore } from '../../stores/authStore';
-import { Mail, Lock, MessageCircle } from 'lucide-react-native';
+
+WebBrowser.maybeCompleteAuthSession();
 
 export default function LoginScreen() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const login = useAuthStore((state) => state.login);
+  const googleLogin = useAuthStore((state) => state.googleLogin);
+  const googleWebClientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || '';
+  const googleNativeClientId = Platform.select({
+    ios: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
+    android: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
+    default: googleWebClientId,
+  }) || googleWebClientId;
+  const hasGoogleClientId = Boolean(googleNativeClientId);
+  const [googleRequest, googleResponse, promptGoogle] = Google.useIdTokenAuthRequest({
+    clientId: googleNativeClientId,
+    webClientId: googleWebClientId || undefined,
+    iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID || undefined,
+    androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID || undefined,
+    selectAccount: true,
+  });
 
-  const handleLogin = async () => {
-    if (!email || !password) {
-      setError('Please fill in all fields');
+  useEffect(() => {
+    const finishGoogleLogin = async () => {
+      if (googleResponse?.type !== 'success') return;
+
+      const idToken = googleResponse.params.id_token;
+      if (!idToken) {
+        setError('Google did not return a login token');
+        return;
+      }
+
+      setIsLoading(true);
+      setError('');
+      try {
+        await googleLogin(idToken);
+        router.replace('/(tabs)/dashboard');
+      } catch (err: any) {
+        setError(err.message || 'Google login failed');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    finishGoogleLogin();
+  }, [googleLogin, googleResponse]);
+
+  const handleGoogleLogin = async () => {
+    if (!hasGoogleClientId) {
+      setError('Google login is not configured');
       return;
     }
-    setIsLoading(true);
+
     setError('');
-    try {
-      await login(email, password);
-      router.replace('/(tabs)/dashboard');
-    } catch (err: any) {
-      setError(err.message || 'Failed to login');
-    } finally {
-      setIsLoading(false);
-    }
+    await promptGoogle();
   };
 
   return (
-    <KeyboardAvoidingView 
+    <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
@@ -39,7 +73,7 @@ export default function LoginScreen() {
             <MessageCircle color="#fff" size={32} />
           </View>
           <Text style={styles.title}>Welcome back</Text>
-          <Text style={styles.subtitle}>Sign in to continue practicing</Text>
+          <Text style={styles.subtitle}>Sign in with Google to continue practicing</Text>
         </View>
 
         {error ? (
@@ -48,57 +82,20 @@ export default function LoginScreen() {
           </View>
         ) : null}
 
-        <View style={styles.form}>
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Email</Text>
-            <View style={styles.inputWrapper}>
-              <Mail color="#64748b" size={20} style={styles.inputIcon} />
-              <TextInput
-                style={styles.input}
-                placeholder="you@example.com"
-                value={email}
-                onChangeText={setEmail}
-                autoCapitalize="none"
-                keyboardType="email-address"
-              />
-            </View>
-          </View>
-
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Password</Text>
-            <View style={styles.inputWrapper}>
-              <Lock color="#64748b" size={20} style={styles.inputIcon} />
-              <TextInput
-                style={styles.input}
-                placeholder="••••••••"
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry
-              />
-            </View>
-          </View>
-
-          <TouchableOpacity 
-            style={styles.button} 
-            onPress={handleLogin}
-            disabled={isLoading}
-          >
-            {isLoading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.buttonText}>Sign In</Text>
-            )}
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.footer}>
-          <Text style={styles.footerText}>Don't have an account? </Text>
-          <Link href="/(auth)/register" asChild>
-            <TouchableOpacity>
-              <Text style={styles.footerLink}>Create one</Text>
-            </TouchableOpacity>
-          </Link>
-        </View>
+        <TouchableOpacity
+          style={[styles.googleButton, (!googleRequest || isLoading || !hasGoogleClientId) && styles.buttonDisabled]}
+          onPress={handleGoogleLogin}
+          disabled={!googleRequest || isLoading || !hasGoogleClientId}
+        >
+          {isLoading ? (
+            <ActivityIndicator color="#0f172a" />
+          ) : (
+            <>
+              <Text style={styles.googleIcon}>G</Text>
+              <Text style={styles.googleButtonText}>Sign in with Google</Text>
+            </>
+          )}
+        </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
   );
@@ -136,6 +133,7 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 16,
     color: '#64748b',
+    textAlign: 'center',
   },
   errorBox: {
     backgroundColor: '#fef2f2',
@@ -150,59 +148,28 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: 'center',
   },
-  form: {
-    gap: 20,
-  },
-  inputGroup: {
-    gap: 8,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#334155',
-  },
-  inputWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  googleButton: {
+    height: 52,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#e2e8f0',
-    borderRadius: 12,
-    backgroundColor: '#f8fafc',
-  },
-  inputIcon: {
-    paddingHorizontal: 14,
-  },
-  input: {
-    flex: 1,
-    height: 52,
-    fontSize: 16,
-    color: '#0f172a',
-  },
-  button: {
-    height: 52,
-    backgroundColor: '#ea3b92',
-    borderRadius: 12,
+    backgroundColor: '#fff',
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 8,
+    flexDirection: 'row',
+    gap: 10,
   },
-  buttonText: {
-    color: '#fff',
+  buttonDisabled: {
+    opacity: 0.6,
+  },
+  googleButtonText: {
+    color: '#0f172a',
     fontSize: 16,
     fontWeight: 'bold',
   },
-  footer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    marginTop: 32,
-  },
-  footerText: {
-    color: '#64748b',
-    fontSize: 15,
-  },
-  footerLink: {
-    color: '#ea3b92',
-    fontSize: 15,
-    fontWeight: 'bold',
+  googleIcon: {
+    color: '#4285f4',
+    fontSize: 18,
+    fontWeight: '900',
   },
 });

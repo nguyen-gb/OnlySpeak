@@ -234,6 +234,32 @@
   font-style: italic;
 }
 
+.roleProgressInline {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  font-style: normal;
+}
+
+.roleProgressInline span {
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.roleActive {
+  color: var(--primary);
+  background: var(--primary-100);
+}
+
+.roleInactive {
+  color: var(--text-tertiary);
+  background: var(--bg-tertiary);
+  opacity: 0.62;
+}
+
 @media (max-width: 640px) {
   .convCard {
     flex-direction: column;

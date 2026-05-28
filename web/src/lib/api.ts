@@ -34,7 +34,7 @@ class ApiClient {
       headers,
     });
 
-    if (response.status === 401 && endpoint !== "/api/auth/login") {
+    if (response.status === 401 && !endpoint.startsWith("/api/auth/")) {
       // Token expired - try refresh
       const refreshed = await this.refreshToken();
       if (refreshed) {
@@ -92,20 +92,6 @@ class ApiClient {
   }
 
   // ---- Auth ----
-  async register(email: string, password: string, full_name: string) {
-    return this.request("/api/auth/register", {
-      method: "POST",
-      body: JSON.stringify({ email, password, full_name }),
-    });
-  }
-
-  async login(email: string, password: string) {
-    return this.request("/api/auth/login", {
-      method: "POST",
-      body: JSON.stringify({ email, password }),
-    });
-  }
-
   async googleLogin(token: string) {
     return this.request("/api/auth/google", {
       method: "POST",

@@ -70,6 +70,7 @@ interface MasteryData {
     best?: number;
     streak?: number;
     success_count?: number;
+    role_success_counts?: Record<string, number>;
     passed?: boolean;
     passed_at?: string | null;
     last_success_at?: string | null;
@@ -101,6 +102,14 @@ const MODE_REQUIRED_SUCCESSES: Record<number, number> = {
 };
 
 const SPEED_DRILL_TIMEOUT = 3.0;
+const ROLE_SUCCESS_CAP = 2;
+
+function getRoleProgress(modeData?: { role_success_counts?: Record<string, number> }) {
+  const roleCounts = modeData?.role_success_counts || {};
+  const a = Math.min(roleCounts.A || 0, ROLE_SUCCESS_CAP);
+  const b = Math.min(roleCounts.B || 0, ROLE_SUCCESS_CAP);
+  return { a, b };
+}
 
 export default function PracticePage() {
   const params = useParams();
@@ -127,6 +136,7 @@ export default function PracticePage() {
   const [timeLeft, setTimeLeft] = useState(SPEED_DRILL_TIMEOUT);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const chatAreaRef = useRef<HTMLDivElement | null>(null);
   const {
     transcript,
     interimTranscript,
@@ -275,6 +285,24 @@ export default function PracticePage() {
     [advanceAfterPartner, practiceMode, speakWithTTS]
   );
 
+  const isReplayDisabled = state === "partner_turn" || isAiThinking;
+
+  const replayText = useCallback(
+    (text: string) => {
+      if (isReplayDisabled) return;
+      speakWithTTS(text, false);
+    },
+    [isReplayDisabled, speakWithTTS]
+  );
+
+  const replayLine = useCallback(
+    (line: Line) => {
+      if (isReplayDisabled) return;
+      playAudio(line, false);
+    },
+    [isReplayDisabled, playAudio]
+  );
+
   useEffect(() => {
     if (state === "partner_turn" && currentLine && !isMyTurn && practiceMode !== 5) {
       const timer = setTimeout(() => playAudio(currentLine, true), 600);
@@ -419,6 +447,13 @@ export default function PracticePage() {
     if (state === "completed") handleComplete();
   }, [state, handleComplete]);
 
+  useEffect(() => {
+    chatAreaRef.current?.scrollTo({
+      top: chatAreaRef.current.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [currentLineIndex, chatHistory.length, scores.length, state]);
+
   const handleStop = () => {
     stopListening();
     if (state === "listening") {
@@ -529,6 +564,13 @@ export default function PracticePage() {
                 const unlockRequirement = m.id === 5
                   ? "Maintain Level 4 through SRS for 30 days"
                   : `Unlock: Score 90%+ x${MODE_REQUIRED_SUCCESSES[m.id - 1] || 1} in ${prevMode?.name || "previous level"}`;
+                const detailMode = isLocked ? m.id - 1 : m.id;
+                const detailData = isLocked
+                  ? masteryData?.mode_scores?.[(m.id - 1).toString()]
+                  : masteryData?.mode_scores?.[m.id.toString()];
+                const roleProgress = (MODE_REQUIRED_SUCCESSES[detailMode] || 0) === 3
+                  ? getRoleProgress(detailData)
+                  : null;
 
                 return (
                   <button 
@@ -546,6 +588,17 @@ export default function PracticePage() {
                       <div className={styles.modeDesc}>
                         {isLocked ? unlockRequirement : m.desc}
                       </div>
+                      {roleProgress && (
+                        <div className={styles.modeRoleProgress} aria-label="Role unlock progress">
+                          <span className={roleProgress.a > 0 ? styles.modeRoleActive : styles.modeRoleInactive}>
+                            Role A
+                          </span>
+                          <span className={roleProgress.b > 0 ? styles.modeRoleActive : styles.modeRoleInactive}>
+                            Role B
+                          </span>
+                          <small>Need both roles</small>
+                        </div>
+                      )}
                     </div>
                     {progressLabel && <span className={styles.modeProgressLabel}>{progressLabel}</span>}
                     {isLocked && <div className={styles.lockBadge}>🔒</div>}
@@ -574,14 +627,14 @@ export default function PracticePage() {
 
       <div className={styles.progressBar}><div className={styles.progressFill} style={{ width: `${progress}%` }} /></div>
 
-      <div className={styles.chatArea}>
+      <div className={styles.chatArea} ref={chatAreaRef}>
         {practiceMode === 5 ? (
           chatHistory.map((h, i) => (
             <div key={i} className={`${styles.bubble} ${h.role === "user" ? styles.bubbleMine : styles.bubblePartner}`}>
                <div className={styles.bubbleRole}>{h.role === "user" ? "You" : "AI"}</div>
                <div className={styles.bubbleContent}>
                  <p className={styles.bubbleText}>{h.content}</p>
-                 <button className={styles.replayBtn} onClick={() => speakWithTTS(h.content, false)}><Volume2 size={14} /></button>
+                 <button className={`${styles.replayBtn} ${isReplayDisabled ? styles.replayBtnDisabled : ""}`} onClick={() => replayText(h.content)} disabled={isReplayDisabled} aria-label="Replay message"><Volume2 size={14} /></button>
                </div>
             </div>
           ))
@@ -599,7 +652,7 @@ export default function PracticePage() {
                 <div className={styles.bubbleContent}>
                   {showText ? <p className={styles.bubbleText}>{line.text_en}</p> : <div className={styles.hiddenTextPlaceholder}><Zap size={14} /> Listen & respond...</div>}
                   {practiceMode !== 2 && (
-                    <button className={styles.replayBtn} onClick={() => playAudio(line, false)}><Volume2 size={14} /></button>
+                    <button className={`${styles.replayBtn} ${isReplayDisabled ? styles.replayBtnDisabled : ""}`} onClick={() => replayLine(line)} disabled={isReplayDisabled} aria-label="Replay line"><Volume2 size={14} /></button>
                   )}
                 </div>
                 {lineScore && <div className={styles.bubbleMeta}><span className={styles.lineScore}>🎤 {lineScore.score}%</span><span className={styles.lineTime}>⚡ {lineScore.responseTime.toFixed(1)}s</span></div>}

@@ -1,17 +1,33 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
-import { History, MessageSquare } from "lucide-react";
+import { History } from "lucide-react";
+
+interface ProgressItem {
+  id: string;
+  conversation_id: string;
+  conversation_title?: string;
+  conversation_situation?: string;
+  role_played: string;
+  completed_lines: number;
+  total_lines: number;
+  pronunciation_score?: number;
+  is_completed: boolean;
+  practice_count: number;
+  last_practiced_at: string;
+}
 
 export default function HistoryPage() {
-  const [progress, setProgress] = useState<any[]>([]);
+  const router = useRouter();
+  const [progress, setProgress] = useState<ProgressItem[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     api
       .getProgress()
-      .then((data: any) => setProgress(data))
+      .then((data) => setProgress(data as ProgressItem[]))
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
@@ -39,6 +55,7 @@ export default function HistoryPage() {
             <thead>
               <tr>
                 <th>Date</th>
+                <th>Conversation</th>
                 <th>Role</th>
                 <th>Progress</th>
                 <th>Score</th>
@@ -48,13 +65,28 @@ export default function HistoryPage() {
             </thead>
             <tbody>
               {progress.map((p) => (
-                <tr key={p.id}>
+                <tr
+                  key={p.id}
+                  onClick={() => router.push(`/practice/${p.conversation_id}`)}
+                  style={{ cursor: "pointer" }}
+                  title="Open conversation practice"
+                >
                   <td>
                     {new Date(p.last_practiced_at).toLocaleDateString("en-US", {
                       month: "short",
                       day: "numeric",
                       year: "numeric",
                     })}
+                  </td>
+                  <td>
+                    <div style={{ fontWeight: 700 }}>
+                      {p.conversation_title || `Conversation ${String(p.conversation_id).slice(0, 8)}`}
+                    </div>
+                    {p.conversation_situation ? (
+                      <div style={{ color: "var(--text-muted)", fontSize: 13, marginTop: 4 }}>
+                        {p.conversation_situation}
+                      </div>
+                    ) : null}
                   </td>
                   <td>
                     <span className="badge badge-primary">Role {p.role_played}</span>

@@ -13,6 +13,16 @@ function getMasteryLabel(level: number) {
   return { text: 'New', color: '#94a3b8' };
 }
 
+const ROLE_SUCCESS_CAP = 2;
+
+function getRoleProgress(modeData?: { role_success_counts?: Record<string, number> }) {
+  const roleCounts = modeData?.role_success_counts || {};
+  return {
+    a: Math.min(roleCounts.A || 0, ROLE_SUCCESS_CAP),
+    b: Math.min(roleCounts.B || 0, ROLE_SUCCESS_CAP),
+  };
+}
+
 export default function TopicDetailScreen() {
   const { id } = useLocalSearchParams();
   const [data, setData] = useState<any>(null);
@@ -59,6 +69,8 @@ export default function TopicDetailScreen() {
     const practiceCount = mastery.practice_count || 0;
     const currentMode = mastery.current_mode || 1;
     const avgRT = mastery.avg_response_time || 0;
+    const currentModeData = mastery.mode_scores?.[String(currentMode)];
+    const roleProgress = currentMode < 4 ? getRoleProgress(currentModeData) : null;
 
     return (
       <View style={styles.convCard}>
@@ -103,6 +115,12 @@ export default function TopicDetailScreen() {
             <View style={styles.masteryMeta}>
               <View style={styles.masteryChip}><Target size={12} color="#64748b" /><Text style={styles.masteryChipText}>{practiceCount}x practiced</Text></View>
               {(mastery.streak_perfect || 0) > 0 && <View style={styles.masteryChip}><Flame size={12} color="#ef4444" /><Text style={styles.masteryChipText}>{mastery.streak_perfect} streak</Text></View>}
+              {roleProgress && (
+                <View style={styles.roleProgressRow}>
+                  <Text style={[styles.roleChip, roleProgress.a > 0 ? styles.roleActive : styles.roleInactive]}>Role A</Text>
+                  <Text style={[styles.roleChip, roleProgress.b > 0 ? styles.roleActive : styles.roleInactive]}>Role B</Text>
+                </View>
+              )}
             </View>
           )}
         </View>
@@ -300,6 +318,10 @@ const styles = StyleSheet.create({
   masteryMeta: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
   masteryChip: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#f8fafc', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
   masteryChipText: { color: '#64748b', fontSize: 12, fontWeight: '700' },
+  roleProgressRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  roleChip: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, fontSize: 11, fontWeight: '900', overflow: 'hidden' },
+  roleActive: { color: '#ea3b92', backgroundColor: '#fce7f3' },
+  roleInactive: { color: '#94a3b8', backgroundColor: '#f1f5f9' },
   practiceBtn: {
     flexDirection: 'row',
     alignItems: 'center',

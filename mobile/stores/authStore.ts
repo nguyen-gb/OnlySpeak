@@ -16,8 +16,7 @@ interface AuthState {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, fullName: string) => Promise<void>;
+  googleLogin: (token: string) => Promise<void>;
   logout: () => Promise<void>;
   loadUser: () => Promise<void>;
 }
@@ -27,13 +26,9 @@ export const useAuthStore = create<AuthState>((set) => ({
   isAuthenticated: false,
   isLoading: true,
 
-  login: async (email, password) => {
+  googleLogin: async (token) => {
     try {
-      const res = await api.post('/api/auth/login', {
-        email,
-        password,
-      });
-
+      const res = await api.post('/api/auth/google', { token });
       const { access_token, refresh_token, user } = res.data;
       await AsyncStorage.setItem('token', access_token);
       if (refresh_token) {
@@ -42,27 +37,7 @@ export const useAuthStore = create<AuthState>((set) => ({
 
       set({ user, isAuthenticated: true, isLoading: false });
     } catch (error: any) {
-      throw new Error(error.response?.data?.detail || 'Login failed');
-    }
-  },
-
-  register: async (email, password, fullName) => {
-    try {
-      const res = await api.post('/api/auth/register', {
-        email,
-        password,
-        full_name: fullName,
-      });
-
-      const { access_token, refresh_token, user } = res.data;
-      await AsyncStorage.setItem('token', access_token);
-      if (refresh_token) {
-        await AsyncStorage.setItem('refresh_token', refresh_token);
-      }
-
-      set({ user, isAuthenticated: true, isLoading: false });
-    } catch (error: any) {
-      throw new Error(error.response?.data?.detail || 'Registration failed');
+      throw new Error(error.response?.data?.detail || 'Google login failed');
     }
   },
 

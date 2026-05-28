@@ -64,7 +64,17 @@ async def verify_google_token(token: str) -> Optional[dict]:
             )
             if response.status_code == 200:
                 data = response.json()
-                if data.get("aud") == settings.GOOGLE_CLIENT_ID:
+                allowed_client_ids = {
+                    client_id
+                    for client_id in (
+                        settings.GOOGLE_CLIENT_ID,
+                        settings.GOOGLE_IOS_CLIENT_ID,
+                        settings.GOOGLE_ANDROID_CLIENT_ID,
+                    )
+                    if client_id
+                }
+                email_verified = data.get("email_verified")
+                if data.get("aud") in allowed_client_ids and email_verified in (True, "true"):
                     return {
                         "email": data["email"],
                         "name": data.get("name", ""),

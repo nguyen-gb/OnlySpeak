@@ -20,12 +20,16 @@ interface AuthState {
   isLoading: boolean;
   isAuthenticated: boolean;
 
-  login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, full_name: string) => Promise<void>;
   googleLogin: (token: string) => Promise<void>;
   logout: () => void;
   loadUser: () => Promise<void>;
   setUser: (user: User) => void;
+}
+
+interface TokenResponse {
+  access_token: string;
+  refresh_token: string;
+  user: User;
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
@@ -33,22 +37,8 @@ export const useAuthStore = create<AuthState>((set) => ({
   isLoading: true,
   isAuthenticated: false,
 
-  login: async (email, password) => {
-    const data: any = await api.login(email, password);
-    localStorage.setItem("access_token", data.access_token);
-    localStorage.setItem("refresh_token", data.refresh_token);
-    set({ user: data.user, isAuthenticated: true });
-  },
-
-  register: async (email, password, full_name) => {
-    const data: any = await api.register(email, password, full_name);
-    localStorage.setItem("access_token", data.access_token);
-    localStorage.setItem("refresh_token", data.refresh_token);
-    set({ user: data.user, isAuthenticated: true });
-  },
-
   googleLogin: async (token) => {
-    const data: any = await api.googleLogin(token);
+    const data = await api.googleLogin(token) as TokenResponse;
     localStorage.setItem("access_token", data.access_token);
     localStorage.setItem("refresh_token", data.refresh_token);
     set({ user: data.user, isAuthenticated: true });
@@ -68,7 +58,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         set({ isLoading: false });
         return;
       }
-      const user: any = await api.getMe();
+      const user = await api.getMe() as User;
       set({ user, isAuthenticated: true, isLoading: false });
     } catch {
       set({ user: null, isAuthenticated: false, isLoading: false });

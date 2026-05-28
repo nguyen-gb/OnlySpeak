@@ -19,6 +19,8 @@ class ProgressResponse(BaseModel):
     id: UUID
     user_id: UUID
     conversation_id: UUID
+    conversation_title: str = ""
+    conversation_situation: str = ""
     role_played: str
     completed_lines: int
     total_lines: int

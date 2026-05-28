@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, FlatList, ActivityIndicator, TouchableOpacity } from 'react-native';
+import { router } from 'expo-router';
 import { endpoints } from '../../lib/api';
 import { CheckCircle, Clock, History as HistoryIcon, MessageSquare } from 'lucide-react-native';
 
@@ -43,9 +44,12 @@ export default function HistoryScreen() {
         keyExtractor={item => item.id}
         contentContainerStyle={styles.list}
         renderItem={({ item }) => (
-          <View style={styles.card}>
+          <TouchableOpacity style={styles.card} onPress={() => router.push(`/practice/${item.conversation_id}`)} activeOpacity={0.8}>
             <View style={styles.cardHeader}>
-              <View>
+              <View style={styles.cardTitleBlock}>
+                <Text style={styles.conversationTitle} numberOfLines={2}>
+                  {item.conversation_title || `Conversation ${String(item.conversation_id).slice(0, 8)}`}
+                </Text>
                 <Text style={styles.date}>
                 {new Date(item.last_practiced_at).toLocaleDateString()}
                 </Text>
@@ -62,7 +66,7 @@ export default function HistoryScreen() {
               <View style={styles.metric}><CheckCircle size={16} color="#10b981" /><Text style={styles.score}>{item.pronunciation_score ? `${item.pronunciation_score}%` : '-'}</Text></View>
               <View style={styles.metric}><Clock size={16} color="#f59e0b" /><Text style={styles.metricText}>{item.practice_count || 0}x</Text></View>
             </View>
-          </View>
+          </TouchableOpacity>
         )}
       />
     </View>
@@ -87,6 +91,8 @@ const styles = StyleSheet.create({
     borderColor: '#e2e8f0',
   },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12, gap: 12 },
+  cardTitleBlock: { flex: 1 },
+  conversationTitle: { color: '#0f172a', fontSize: 16, fontWeight: '900' },
   date: { fontSize: 13, color: '#64748b' },
   modeText: { color: '#0f172a', fontSize: 15, fontWeight: '800', marginTop: 4 },
   badgeSuccess: { backgroundColor: '#dcfce7', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 },

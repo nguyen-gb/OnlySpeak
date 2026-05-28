@@ -17,6 +17,7 @@ const MODES = [
   { id: 5, name: 'Fluent', desc: 'Free conversation with AI on this topic.' },
 ];
 const MODE_REQUIRED_SUCCESSES: Record<number, number> = { 1: 3, 2: 3, 3: 3, 4: 5 };
+const ROLE_SUCCESS_CAP = 2;
 
 type PracticeState = 'select_role' | 'partner_turn' | 'your_turn' | 'listening' | 'scored' | 'completed';
 
@@ -35,6 +36,14 @@ function scorePronunciation(expected: string, actual: string) {
   });
   const score = expectedWords.length ? Math.round((matches / expectedWords.length) * 100) : 0;
   return { score, wordDetails };
+}
+
+function getRoleProgress(modeData?: { role_success_counts?: Record<string, number> }) {
+  const roleCounts = modeData?.role_success_counts || {};
+  return {
+    a: Math.min(roleCounts.A || 0, ROLE_SUCCESS_CAP),
+    b: Math.min(roleCounts.B || 0, ROLE_SUCCESS_CAP),
+  };
 }
 
 export default function PracticeScreen() {
@@ -59,6 +68,7 @@ export default function PracticeScreen() {
   const [currentResponseTime, setCurrentResponseTime] = useState(0);
   const [timeLeft, setTimeLeft] = useState(SPEED_DRILL_TIMEOUT);
   const soundRef = useRef<Audio.Sound | null>(null);
+  const chatScrollRef = useRef<ScrollView | null>(null);
 
   useSpeechRecognitionEvent('start', () => {
     setIsRecording(true);
@@ -165,6 +175,18 @@ export default function PracticeScreen() {
       speakWithTTS(line.text_en, advance);
     }
   }, [advanceAfterPartner, speakWithTTS]);
+
+  const isReplayDisabled = state === 'partner_turn' || isAiThinking;
+
+  const replayText = useCallback((text: string) => {
+    if (isReplayDisabled) return;
+    speakWithTTS(text, false);
+  }, [isReplayDisabled, speakWithTTS]);
+
+  const replayLine = useCallback((line: any) => {
+    if (isReplayDisabled) return;
+    playAudio(line, false);
+  }, [isReplayDisabled, playAudio]);
 
   useEffect(() => {
     if (state === 'partner_turn' && currentLine && !isMyTurn && practiceMode !== 5) {
@@ -337,6 +359,12 @@ export default function PracticeScreen() {
     if (state === 'completed') saveProgress();
   }, [state, saveProgress]);
 
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      chatScrollRef.current?.scrollToEnd({ animated: true });
+    });
+  }, [currentIndex, chatHistory.length, scores.length, state]);
+
   if (loading) return <View style={styles.center}><ActivityIndicator size="large" color={PRIMARY} /></View>;
   if (!conv) return <View style={styles.center}><Text>Conversation not found</Text></View>;
 
@@ -392,6 +420,9 @@ export default function PracticeScreen() {
               const previousModeData = masteryData?.mode_scores?.[String(mode.id - 1)];
               const count = unlocked ? (currentModeData?.success_count || 0) : (previousModeData?.success_count || 0);
               const required = MODE_REQUIRED_SUCCESSES[unlocked ? mode.id : mode.id - 1] || 1;
+              const detailMode = unlocked ? mode.id : mode.id - 1;
+              const detailData = unlocked ? currentModeData : previousModeData;
+              const roleProgress = (MODE_REQUIRED_SUCCESSES[detailMode] || 0) === 3 ? getRoleProgress(detailData) : null;
               return (
                 <TouchableOpacity
                   key={mode.id}
@@ -403,6 +434,13 @@ export default function PracticeScreen() {
                   <View style={{ flex: 1 }}>
                     <Text style={styles.modeName}>{mode.name}</Text>
                     <Text style={styles.modeDesc}>{unlocked ? mode.desc : `Unlock with 90%+ perfect sessions in Mode ${mode.id - 1}`}</Text>
+                    {!!roleProgress && (
+                      <View style={styles.modeRoleProgress}>
+                        <Text style={[styles.modeRoleChip, roleProgress.a > 0 ? styles.modeRoleActive : styles.modeRoleInactive]}>Role A</Text>
+                        <Text style={[styles.modeRoleChip, roleProgress.b > 0 ? styles.modeRoleActive : styles.modeRoleInactive]}>Role B</Text>
+                        <Text style={styles.modeRoleHint}>Need both</Text>
+                      </View>
+                    )}
                   </View>
                   {unlocked ? <Text style={styles.modeProgress}>{mode.id === 5 ? 'Fluent' : `${count}/${required}`}</Text> : <Lock size={16} color="#94a3b8" />}
                 </TouchableOpacity>
@@ -432,12 +470,12 @@ export default function PracticeScreen() {
         </View>
         <View style={styles.progressTrackSmall}><View style={[styles.progressFill, { width: `${progress}%` }]} /></View>
 
-        <ScrollView style={styles.chatArea} contentContainerStyle={styles.chatContent}>
+        <ScrollView ref={chatScrollRef} style={styles.chatArea} contentContainerStyle={styles.chatContent}>
           {practiceMode === 5 ? chatHistory.map((message, index) => (
             <View key={`${message.role}-${index}`} style={[styles.bubble, message.role === 'user' ? styles.bubbleMine : styles.bubblePartner]}>
               <Text style={[styles.bubbleRole, message.role === 'user' && styles.bubbleRoleMine]}>{message.role === 'user' ? 'You' : 'AI'}</Text>
               <Text style={[styles.bubbleText, message.role === 'user' && styles.bubbleTextMine]}>{message.content}</Text>
-              <TouchableOpacity style={styles.replayBtn} onPress={() => speakWithTTS(message.content, false)}><Volume2 size={14} color={message.role === 'user' ? '#fff' : '#64748b'} /></TouchableOpacity>
+              <TouchableOpacity style={[styles.replayBtn, isReplayDisabled && styles.replayBtnDisabled]} onPress={() => replayText(message.content)} disabled={isReplayDisabled}><Volume2 size={14} color={message.role === 'user' ? '#fff' : '#64748b'} /></TouchableOpacity>
             </View>
           )) : conv.lines.slice(0, currentIndex + 1).map((line: any, index: number) => {
             const mine = line.speaker === myRole;
@@ -448,7 +486,7 @@ export default function PracticeScreen() {
               <View key={line.id} style={[styles.bubble, mine ? styles.bubbleMine : styles.bubblePartner, current && styles.bubbleCurrent, !current && { opacity: 0.65 }]}>
                 <Text style={[styles.bubbleRole, mine && styles.bubbleRoleMine]}>{line.speaker === 'A' ? conv.role_a_name : conv.role_b_name}</Text>
                 <Text style={[styles.bubbleText, mine && styles.bubbleTextMine]}>{hideText ? 'Listen and respond...' : line.text_en}</Text>
-                {practiceMode !== 2 && <TouchableOpacity style={styles.replayBtn} onPress={() => playAudio(line, false)}><Volume2 size={14} color={mine ? '#fff' : '#64748b'} /></TouchableOpacity>}
+                {practiceMode !== 2 && <TouchableOpacity style={[styles.replayBtn, isReplayDisabled && styles.replayBtnDisabled]} onPress={() => replayLine(line)} disabled={isReplayDisabled}><Volume2 size={14} color={mine ? '#fff' : '#64748b'} /></TouchableOpacity>}
                 {lineScore && <Text style={[styles.bubbleMeta, mine && styles.bubbleTextMine]}>{lineScore.score}% · {lineScore.responseTime.toFixed(1)}s</Text>}
               </View>
             );
@@ -536,6 +574,11 @@ const styles = StyleSheet.create({
   modeNumberText: { color: '#fff', fontWeight: '900' },
   modeName: { color: '#0f172a', fontWeight: '900' },
   modeDesc: { color: '#64748b', fontSize: 13, marginTop: 3 },
+  modeRoleProgress: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 7 },
+  modeRoleChip: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999, fontSize: 11, fontWeight: '900', overflow: 'hidden' },
+  modeRoleActive: { color: PRIMARY, backgroundColor: '#fce7f3' },
+  modeRoleInactive: { color: '#94a3b8', backgroundColor: '#f1f5f9' },
+  modeRoleHint: { color: '#94a3b8', fontSize: 11, fontWeight: '800' },
   modeProgress: { color: PRIMARY, fontWeight: '900', fontSize: 12 },
   primaryBtn: { backgroundColor: PRIMARY, borderRadius: 14, padding: 15, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   primaryText: { color: '#fff', fontWeight: '900', fontSize: 16 },
@@ -563,6 +606,7 @@ const styles = StyleSheet.create({
   bubbleText: { color: '#0f172a', fontSize: 16, lineHeight: 22 },
   bubbleTextMine: { color: '#fff' },
   replayBtn: { alignSelf: 'flex-end', marginTop: 8 },
+  replayBtnDisabled: { opacity: 0.25 },
   bubbleMeta: { marginTop: 8, fontWeight: '800', fontSize: 12 },
   actionArea: { backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#e2e8f0', padding: 16 },
   actionMessage: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 52 },

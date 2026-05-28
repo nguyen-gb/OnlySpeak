@@ -15,7 +15,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
-      const publicPaths = ["/", "/login", "/register"];
+      const publicPaths = ["/", "/login"];
       if (!publicPaths.includes(pathname)) {
         router.push("/login");
       }
