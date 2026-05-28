@@ -236,7 +236,7 @@ export default function DashboardPage() {
                     </span>
                   </div>
                   <div className={styles.recentMeta}>
-                    {p.avg_response_time > 0 && (
+                    {typeof p.avg_response_time === "number" && p.avg_response_time > 0 && (
                        <span className={styles.rtBadgeSmall}>⚡ {p.avg_response_time}s</span>
                     )}
                     <span
