@@ -134,10 +134,12 @@ export default function PracticePage() {
   const [turnStartTime, setTurnStartTime] = useState<number | null>(null);
   const [currentResponseTime, setCurrentResponseTime] = useState<number>(0);
   const [timeLeft, setTimeLeft] = useState(SPEED_DRILL_TIMEOUT);
+  const [elapsedTime, setElapsedTime] = useState<number>(0);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const chatAreaRef = useRef<HTMLDivElement | null>(null);
   const {
+    isListening: sttActive,
     transcript,
     interimTranscript,
     start: startListening,
@@ -163,6 +165,37 @@ export default function PracticePage() {
         .finally(() => setLoading(false));
     }
   }, [params.id]);
+
+  // Auto-select role with fewer successes in the currently selected practice mode
+  useEffect(() => {
+    if (!masteryData) return;
+    const modeData = masteryData.mode_scores?.[practiceMode.toString()];
+    const counts = modeData?.role_success_counts || {};
+    const countA = counts.A || 0;
+    const countB = counts.B || 0;
+    
+    if (countA < countB) {
+      setMyRole("A");
+    } else if (countB < countA) {
+      setMyRole("B");
+    } else {
+      // If equal in current mode, check total across all modes
+      let totalA = 0;
+      let totalB = 0;
+      Object.values(masteryData.mode_scores || {}).forEach((m: any) => {
+        const c = m?.role_success_counts || {};
+        totalA += c.A || 0;
+        totalB += c.B || 0;
+      });
+      if (totalA < totalB) {
+        setMyRole("A");
+      } else if (totalB < totalA) {
+        setMyRole("B");
+      } else {
+        setMyRole("A"); // Default to A if completely equal
+      }
+    }
+  }, [practiceMode, masteryData]);
 
   const currentLine = conv?.lines[currentLineIndex] || null;
   const isMyTurn = currentLine?.speaker === myRole;
@@ -227,7 +260,6 @@ export default function PracticePage() {
       setCurrentResponseTime(rt);
       setState("scored");
     }
-    stopListening();
   }, [state, practiceMode, currentLine, currentLineIndex, turnStartTime]);
 
   const advanceAfterPartner = useCallback(() => {
@@ -314,7 +346,16 @@ export default function PracticePage() {
     if (transcript && state === "listening") {
       processSpeechResult(transcript);
     }
-  }, [transcript, state, processSpeechResult]);
+  }, [transcript]);
+
+  // Fallback: if STT stopped (sttActive=false) but produced no transcript,
+  // return user to "your_turn" so they can try again.
+  useEffect(() => {
+    if (!sttActive && state === "listening" && !transcript) {
+      setState("your_turn");
+      setTurnStartTime(Date.now());
+    }
+  }, [sttActive]);
 
   useEffect(() => {
     let timer: any;
@@ -333,6 +374,19 @@ export default function PracticePage() {
     }
     return () => clearInterval(timer);
   }, [state, practiceMode, currentLineIndex]);
+
+  useEffect(() => {
+    let timer: any;
+    if (state === "your_turn" && practiceMode !== 4) {
+      setElapsedTime(0);
+      timer = setInterval(() => {
+        if (turnStartTime) {
+          setElapsedTime((Date.now() - turnStartTime) / 1000);
+        }
+      }, 100);
+    }
+    return () => clearInterval(timer);
+  }, [state, practiceMode, turnStartTime]);
 
   const handleTimeout = () => {
     if (state !== "your_turn") return;
@@ -416,6 +470,34 @@ export default function PracticePage() {
     setTurnStartTime(Date.now());
   };
 
+  const handleSkip = () => {
+    if (state !== "your_turn") return;
+    const rt = turnStartTime ? (Date.now() - turnStartTime) / 1000 : 0;
+    setScores((prev) => [...prev, {
+      lineIndex: currentLineIndex,
+      score: 0,
+      transcript: "[Skipped]",
+      details: { wordDetails: [] },
+      responseTime: rt
+    }]);
+    resetSpeech();
+    stopListening();
+
+    const nextIndex = currentLineIndex + 1;
+    if (conv && nextIndex < totalLines) {
+      setCurrentLineIndex(nextIndex);
+      const nextLine = conv.lines[nextIndex];
+      if (nextLine.speaker === myRole) {
+        setState("your_turn");
+        setTurnStartTime(Date.now());
+      } else {
+        setState("partner_turn");
+      }
+    } else {
+      setState("completed");
+    }
+  };
+
   const handleComplete = useCallback(async () => {
     if (!conv) return;
     const avgScore = scores.length > 0
@@ -455,25 +537,37 @@ export default function PracticePage() {
   }, [currentLineIndex, chatHistory.length, scores.length, state]);
 
   const handleStop = () => {
+    // stopListening() calls recognition.stop() which triggers onend,
+    // which sets `transcript` with the accumulated text.
+    // The useEffect watching `transcript` will then call processSpeechResult.
     stopListening();
-    if (state === "listening") {
-       const textToUse = transcript || interimTranscript;
-       if (textToUse) {
-          processSpeechResult(textToUse);
-       } else {
-          setState("your_turn");
-          setTurnStartTime(Date.now());
-       }
-    }
   };
 
   useEffect(() => {
     return () => {
-      if (audioRef.current) audioRef.current.pause();
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.onended = null;
+        audioRef.current.onerror = null;
+      }
       window.speechSynthesis.cancel();
       stopListening();
     };
   }, [stopListening]);
+
+  useEffect(() => {
+    if (state === "select_role" || state === "completed") {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.onended = null;
+        audioRef.current.onerror = null;
+      }
+      window.speechSynthesis.cancel();
+      setIsPlaying(false);
+      stopListening();
+      resetSpeech();
+    }
+  }, [state, stopListening, resetSpeech]);
 
   if (loading) return <div className="flex-center p-80"><div className="spinner spinner-lg" /></div>;
   if (!conv) return <div className="empty-state"><h3>Conversation not found</h3></div>;
@@ -676,12 +770,12 @@ export default function PracticePage() {
                 {practiceMode === 4 ? (
                   <span className={styles.timeUrgent}><Zap size={14} /> {timeLeft.toFixed(1)}s remaining</span>
                 ) : (
-                  <><Timer size={14} /> {( (Date.now() - (turnStartTime || 0)) / 1000 ).toFixed(1)}s</>
+                  <><Timer size={14} /> {elapsedTime.toFixed(1)}s</>
                 )}
              </div>
              <div className={styles.actionButtons}>
                 <button className={`btn btn-primary btn-lg ${styles.speakBtn}`} onClick={handleSpeak}><Mic size={22} /> Tap to Speak</button>
-                {practiceMode !== 5 && <button className="btn btn-ghost btn-sm" onClick={() => resetSpeech()}><SkipForward size={16} /> Skip</button>}
+                {practiceMode !== 5 && <button className="btn btn-ghost btn-sm" onClick={handleSkip}><SkipForward size={16} /> Skip</button>}
              </div>
           </div>
         )}
