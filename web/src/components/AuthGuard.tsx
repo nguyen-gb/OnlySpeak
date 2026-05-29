@@ -22,6 +22,8 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
     }
   }, [isLoading, isAuthenticated, pathname, router]);
 
+  const isPublicPath = ["/", "/login"].includes(pathname);
+
   if (isLoading) {
     return (
       <div style={{
@@ -34,6 +36,11 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
         <div className="spinner spinner-lg" />
       </div>
     );
+  }
+
+  // Prevent rendering protected pages when not authenticated
+  if (!isAuthenticated && !isPublicPath) {
+    return null;
   }
 
   return <>{children}</>;

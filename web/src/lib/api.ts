@@ -34,7 +34,8 @@ class ApiClient {
       headers,
     });
 
-    if (response.status === 401 && !endpoint.startsWith("/api/auth/")) {
+    const nonRefreshableEndpoints = ["/api/auth/login", "/api/auth/register", "/api/auth/google", "/api/auth/refresh"];
+    if (response.status === 401 && !nonRefreshableEndpoints.includes(endpoint)) {
       // Token expired - try refresh
       const refreshed = await this.refreshToken();
       if (refreshed) {
