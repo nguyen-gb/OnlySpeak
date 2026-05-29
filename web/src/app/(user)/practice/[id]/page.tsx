@@ -4,6 +4,8 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { api, API_URL } from "@/lib/api";
+import { useConversation, useMasteryMap } from "@/hooks/useApi";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   useSpeechRecognition,
   scorePronunciation,
@@ -115,9 +117,15 @@ export default function PracticePage() {
   const params = useParams();
   const router = useRouter();
 
-  const [conv, setConv] = useState<ConvData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [masteryData, setMasteryData] = useState<any>(null);
+  const qc = useQueryClient();
+  const convId = params.id as string;
+  const { data: rawConv, isLoading: convLoading } = useConversation(convId);
+  const conv = rawConv as ConvData | null;
+  const { data: masteryMap = {}, isLoading: masteryLoading } = useMasteryMap();
+  const loading = convLoading || masteryLoading;
+
+  const [localMasteryData, setLocalMasteryData] = useState<any>(null);
+  const masteryData = localMasteryData || masteryMap[convId] || null;
 
   const [myRole, setMyRole] = useState<"A" | "B">("B");
   const [practiceMode, setPracticeMode] = useState(1);
@@ -148,23 +156,16 @@ export default function PracticePage() {
   } = useSpeechRecognition("en-US");
 
   useEffect(() => {
-    if (params.id) {
-      Promise.all([
-        api.getConversation(params.id as string),
-        api.getMasteryMap().catch(() => ({})),
-      ])
-        .then(([convData, masteryMap]: [any, any]) => {
-          setConv(convData);
-          const m = masteryMap[params.id as string];
-          setMasteryData(m);
-          if (m?.current_mode) {
-            setPracticeMode(Math.min(m.current_mode, 5));
-          }
-        })
-        .catch(console.error)
-        .finally(() => setLoading(false));
+    if (masteryMap[convId]) {
+      setLocalMasteryData(null);
     }
-  }, [params.id]);
+  }, [masteryMap, convId]);
+
+  useEffect(() => {
+    if (masteryData?.current_mode) {
+      setPracticeMode(Math.min(masteryData.current_mode, 5));
+    }
+  }, [masteryData]);
 
   // Auto-select role with fewer successes in the currently selected practice mode
   useEffect(() => {
@@ -213,12 +214,13 @@ export default function PracticePage() {
     setCurrentResponseTime(rt);
 
     try {
-      const response = await api.sendFreeTalk({
+      const res = await api.post("/api/chat/free-talk", {
         conversation_id: params.id as string,
         user_input: input,
         history: chatHistory.map(h => ({ role: h.role, content: h.content })),
         role_played: myRole
-      }) as any;
+      });
+      const response = res.data as any;
 
       const newEntry: ChatMessage = { role: "user", content: input, evaluation: response.evaluation };
       const aiEntry: ChatMessage = { role: "model", content: response.reply };
@@ -409,13 +411,13 @@ export default function PracticePage() {
     if (practiceMode === 5) {
       if (myRole === "B") {
         setIsAiThinking(true);
-        api.sendFreeTalk({
+        api.post("/api/chat/free-talk", {
            conversation_id: params.id as string,
            user_input: "Hello! Let's start the conversation.",
            history: [],
            role_played: "B"
         }).then(res => {
-           const response = res as any;
+           const response = res.data as any;
            setChatHistory([{ role: "model", content: response.reply }]);
            speakWithTTS(response.reply);
            setState("your_turn");
@@ -504,7 +506,7 @@ export default function PracticePage() {
         ? Math.round(scores.reduce((a, s) => a + s.score, 0) / scores.length)
         : undefined;
     try {
-      const result = await api.saveProgress({
+      const saveRes = await api.post("/api/progress", {
         conversation_id: conv.id,
         role_played: myRole,
         completed_lines: practiceMode === 5 ? scores.length : myLinesCount,
@@ -514,16 +516,20 @@ export default function PracticePage() {
         practice_mode: practiceMode,
         response_times: scores.map(s => s.responseTime)
       });
+      const result = saveRes.data;
       setMasteryResult(result);
+      qc.invalidateQueries({ queryKey: ["progress", "mastery"] });
+      
       // Always reload mastery map to get properly merged data across roles
-      const masteryMap = await api.getMasteryMap().catch(() => null) as Record<string, MasteryData> | null;
-      if (masteryMap && masteryMap[conv.id]) {
-        setMasteryData(masteryMap[conv.id]);
+      const masteryRes = await api.get("/api/progress/mastery").catch(() => null);
+      const masteryMapData = masteryRes?.data as Record<string, MasteryData> | null;
+      if (masteryMapData && masteryMapData[conv.id]) {
+        setLocalMasteryData(masteryMapData[conv.id]);
       } else {
-        setMasteryData(result);
+        setLocalMasteryData(result);
       }
     } catch { }
-  }, [conv, myRole, practiceMode, scores, myLinesCount, totalLines]);
+  }, [conv, myRole, practiceMode, scores, myLinesCount, totalLines, qc]);
 
   useEffect(() => {
     if (state === "completed") handleComplete();

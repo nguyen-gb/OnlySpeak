@@ -1,7 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
+import { useState } from "react";
+import {
+  useAdminTopics,
+  useAdminCreateTopic,
+  useAdminUpdateTopic,
+  useAdminDeleteTopic,
+} from "@/hooks/useApi";
 import {
   Plus,
   Pencil,
@@ -14,8 +19,6 @@ import {
 import styles from "./adminTopics.module.css";
 
 export default function AdminTopicsPage() {
-  const [topics, setTopics] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -29,18 +32,11 @@ export default function AdminTopicsPage() {
   const [sortOrder, setSortOrder] = useState(0);
   const [isPublished, setIsPublished] = useState(false);
 
-  const loadTopics = () => {
-    setLoading(true);
-    api
-      .adminGetTopics()
-      .then((data: any) => setTopics(data))
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(() => {
-    loadTopics();
-  }, []);
+  const { data: rawTopics, isLoading: loading } = useAdminTopics();
+  const topics = (rawTopics || []) as any[];
+  const createMutation = useAdminCreateTopic();
+  const updateMutation = useAdminUpdateTopic();
+  const deleteMutation = useAdminDeleteTopic();
 
   const resetForm = () => {
     setTitle("");
@@ -72,29 +68,27 @@ export default function AdminTopicsPage() {
 
     try {
       if (editId) {
-        await api.adminUpdateTopic(editId, data);
+        await updateMutation.mutateAsync({ id: editId, data });
         setSuccess("Topic updated!");
       } else {
-        await api.adminCreateTopic(data);
+        await createMutation.mutateAsync(data);
         setSuccess("Topic created!");
       }
       resetForm();
-      loadTopics();
       setTimeout(() => setSuccess(""), 3000);
     } catch (err: any) {
-      setError(err.message);
+      setError(err.message || "Failed to save topic");
     }
   };
 
   const handleDelete = async (id: string) => {
     if (!confirm("Delete this topic and all its conversations?")) return;
     try {
-      await api.adminDeleteTopic(id);
-      loadTopics();
+      await deleteMutation.mutateAsync(id);
       setSuccess("Topic deleted!");
       setTimeout(() => setSuccess(""), 3000);
     } catch (err: any) {
-      setError(err.message);
+      setError(err.message || "Failed to delete topic");
     }
   };
 

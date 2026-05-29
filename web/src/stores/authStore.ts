@@ -38,7 +38,8 @@ export const useAuthStore = create<AuthState>((set) => ({
   isAuthenticated: false,
 
   googleLogin: async (token) => {
-    const data = await api.googleLogin(token) as TokenResponse;
+    const res = await api.post("/api/auth/google", { token });
+    const data = res.data as TokenResponse;
     localStorage.setItem("access_token", data.access_token);
     localStorage.setItem("refresh_token", data.refresh_token);
     set({ user: data.user, isAuthenticated: true });
@@ -58,7 +59,8 @@ export const useAuthStore = create<AuthState>((set) => ({
         set({ isLoading: false });
         return;
       }
-      const user = await api.getMe() as User;
+      const res = await api.get("/api/auth/me");
+      const user = res.data as User;
       set({ user, isAuthenticated: true, isLoading: false });
     } catch {
       set({ user: null, isAuthenticated: false, isLoading: false });

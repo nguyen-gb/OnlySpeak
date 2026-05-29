@@ -1,258 +1,126 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
+import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
 
-interface FetchOptions extends RequestInit {
-  token?: string;
+export const API_URL =
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
+
+// ── Axios instance ──────────────────────────────────────────────────────────
+const api = axios.create({
+  baseURL: API_URL,
+  headers: { "Content-Type": "application/json" },
+});
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+function getAccessToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("access_token");
 }
 
-class ApiClient {
-  private baseUrl: string;
+function getRefreshToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("refresh_token");
+}
 
-  constructor(baseUrl: string) {
-    this.baseUrl = baseUrl;
+function setTokens(access: string, refresh: string) {
+  localStorage.setItem("access_token", access);
+  localStorage.setItem("refresh_token", refresh);
+}
+
+function clearTokens() {
+  localStorage.removeItem("access_token");
+  localStorage.removeItem("refresh_token");
+}
+
+// ── Request interceptor: attach access token ────────────────────────────────
+api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
+  const token = getAccessToken();
+  if (token && config.headers) {
+    config.headers.Authorization = `Bearer ${token}`;
   }
+  return config;
+});
 
-  private getToken(): string | null {
-    if (typeof window === "undefined") return null;
-    return localStorage.getItem("access_token");
-  }
+// ── Response interceptor: auto-refresh on 401 ──────────────────────────────
+const NON_REFRESHABLE = [
+  "/api/auth/login",
+  "/api/auth/register",
+  "/api/auth/google",
+  "/api/auth/refresh",
+];
 
-  async request<T>(endpoint: string, options: FetchOptions = {}): Promise<T> {
-    const { token, ...fetchOptions } = options;
-    const accessToken = token || this.getToken();
+let refreshPromise: Promise<boolean> | null = null;
 
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      ...(fetchOptions.headers as Record<string, string>),
-    };
+async function tryRefresh(): Promise<boolean> {
+  const rt = getRefreshToken();
+  if (!rt) return false;
 
-    if (accessToken) {
-      headers["Authorization"] = `Bearer ${accessToken}`;
-    }
-
-    const response = await fetch(`${this.baseUrl}${endpoint}`, {
-      ...fetchOptions,
-      headers,
-    });
-
-    const nonRefreshableEndpoints = ["/api/auth/login", "/api/auth/register", "/api/auth/google", "/api/auth/refresh"];
-    if (response.status === 401 && !nonRefreshableEndpoints.includes(endpoint)) {
-      // Token expired - try refresh
-      const refreshed = await this.refreshToken();
-      if (refreshed) {
-        headers["Authorization"] = `Bearer ${this.getToken()}`;
-        const retryResponse = await fetch(`${this.baseUrl}${endpoint}`, {
-          ...fetchOptions,
-          headers,
-        });
-        if (!retryResponse.ok) {
-          throw new ApiError(retryResponse.status, await retryResponse.text());
-        }
-        return retryResponse.json();
-      }
-      // Refresh failed - logout
-      this.logout();
-      throw new ApiError(401, "Session expired");
-    }
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new ApiError(
-        response.status,
-        errorData.detail || "Something went wrong"
-      );
-    }
-
-    return response.json();
-  }
-
-  private async refreshToken(): Promise<boolean> {
-    const refreshToken = localStorage.getItem("refresh_token");
-    if (!refreshToken) return false;
-
-    try {
-      const response = await fetch(
-        `${this.baseUrl}/api/auth/refresh?refresh_token=${refreshToken}`,
-        { method: "POST" }
-      );
-      if (response.ok) {
-        const data = await response.json();
-        localStorage.setItem("access_token", data.access_token);
-        localStorage.setItem("refresh_token", data.refresh_token);
-        return true;
-      }
-    } catch {
-      // ignore
-    }
+  try {
+    const res = await axios.post(
+      `${API_URL}/api/auth/refresh?refresh_token=${rt}`
+    );
+    setTokens(res.data.access_token, res.data.refresh_token);
+    return true;
+  } catch {
     return false;
   }
-
-  private logout() {
-    localStorage.removeItem("access_token");
-    localStorage.removeItem("refresh_token");
-    window.location.href = "/login";
-  }
-
-  // ---- Auth ----
-  async googleLogin(token: string) {
-    return this.request("/api/auth/google", {
-      method: "POST",
-      body: JSON.stringify({ token }),
-    });
-  }
-
-  async getMe() {
-    return this.request("/api/auth/me");
-  }
-
-  // ---- Topics ----
-  async getTopics(level?: string) {
-    const q = level ? `?level=${level}` : "";
-    return this.request(`/api/topics${q}`);
-  }
-
-  async getTopic(id: string) {
-    return this.request(`/api/topics/${id}`);
-  }
-
-  // ---- Conversations ----
-  async getConversation(id: string) {
-    return this.request(`/api/conversations/${id}`);
-  }
-
-  // ---- Progress ----
-  async saveProgress(data: {
-    conversation_id: string;
-    role_played: string;
-    completed_lines: number;
-    total_lines: number;
-    is_completed: boolean;
-    pronunciation_score?: number;
-    practice_mode: number;
-    response_times: number[];
-  }) {
-    return this.request("/api/progress", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-  }
-
-  async getProgress() {
-    return this.request("/api/progress");
-  }
-
-  async getStats() {
-    return this.request("/api/progress/stats");
-  }
-
-  async getMasteryMap() {
-    return this.request("/api/progress/mastery");
-  }
-
-  async getReviewList() {
-    return this.request("/api/progress/review");
-  }
-
-  async sendFreeTalk(data: {
-    conversation_id: string;
-    user_input: string;
-    history: { role: string; content: string }[];
-    role_played: string;
-  }) {
-    return this.request("/api/chat/free-talk", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-  }
-
-  // ---- Admin ----
-  async adminGetStats() {
-    return this.request("/api/admin/stats");
-  }
-
-  async adminGetTopics() {
-    return this.request("/api/admin/topics");
-  }
-
-  async adminCreateTopic(data: Record<string, unknown>) {
-    return this.request("/api/admin/topics", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-  }
-
-  async adminUpdateTopic(id: string, data: Record<string, unknown>) {
-    return this.request(`/api/admin/topics/${id}`, {
-      method: "PUT",
-      body: JSON.stringify(data),
-    });
-  }
-
-  async adminDeleteTopic(id: string) {
-    return this.request(`/api/admin/topics/${id}`, { method: "DELETE" });
-  }
-
-  async adminGetConversations(topicId?: string) {
-    const q = topicId ? `?topic_id=${topicId}` : "";
-    return this.request(`/api/admin/conversations${q}`);
-  }
-
-  async adminGetConversation(id: string) {
-    return this.request(`/api/admin/conversations/${id}`);
-  }
-
-  async adminCreateConversation(data: Record<string, unknown>) {
-    return this.request("/api/admin/conversations", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-  }
-
-  async adminUpdateConversation(id: string, data: Record<string, unknown>) {
-    return this.request(`/api/admin/conversations/${id}`, {
-      method: "PUT",
-      body: JSON.stringify(data),
-    });
-  }
-
-  async adminDeleteConversation(id: string) {
-    return this.request(`/api/admin/conversations/${id}`, { method: "DELETE" });
-  }
-
-  async adminAddLine(convId: string, data: Record<string, unknown>) {
-    return this.request(`/api/admin/conversations/${convId}/lines`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-  }
-
-  async adminDeleteLine(lineId: string) {
-    return this.request(`/api/admin/lines/${lineId}`, { method: "DELETE" });
-  }
-
-  async adminGenerateAudio(convId: string) {
-    return this.request(`/api/admin/conversations/${convId}/generate-audio`, {
-      method: "POST",
-    });
-  }
-
-  async adminGetUsers() {
-    return this.request("/api/admin/users");
-  }
-
-  async adminToggleUser(userId: string) {
-    return this.request(`/api/admin/users/${userId}/toggle-active`, {
-      method: "PUT",
-    });
-  }
 }
 
-export class ApiError extends Error {
-  status: number;
-  constructor(status: number, message: string) {
-    super(message);
-    this.status = status;
+api.interceptors.response.use(
+  (response) => response,
+  async (error: AxiosError) => {
+    const originalRequest = error.config as InternalAxiosRequestConfig & {
+      _retry?: boolean;
+    };
+
+    if (!originalRequest) return Promise.reject(error);
+
+    const endpoint = originalRequest.url || "";
+    const isNonRefreshable = NON_REFRESHABLE.some((p) =>
+      endpoint.startsWith(p)
+    );
+
+    if (error.response?.status === 401 && !isNonRefreshable && !originalRequest._retry) {
+      originalRequest._retry = true;
+
+      // Deduplicate concurrent refresh calls
+      if (!refreshPromise) {
+        refreshPromise = tryRefresh().finally(() => {
+          refreshPromise = null;
+        });
+      }
+
+      const refreshed = await refreshPromise;
+
+      if (refreshed) {
+        const newToken = getAccessToken();
+        if (originalRequest.headers) {
+          originalRequest.headers.Authorization = `Bearer ${newToken}`;
+        }
+        return api(originalRequest);
+      }
+
+      // Refresh failed → force logout
+      clearTokens();
+      if (typeof window !== "undefined") {
+        window.location.href = "/login";
+      }
+    }
+
+    return Promise.reject(error);
   }
+);
+
+// ── Export a typed error helper ─────────────────────────────────────────────
+export function getErrorMessage(error: unknown): string {
+  if (axios.isAxiosError(error)) {
+    return (
+      error.response?.data?.detail ||
+      error.response?.data?.message ||
+      error.message
+    );
+  }
+  if (error instanceof Error) return error.message;
+  return "Something went wrong";
 }
 
-export const api = new ApiClient(API_URL);
-export { API_URL };
+export { api };
+export default api;

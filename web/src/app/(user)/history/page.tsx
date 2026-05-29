@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api } from "@/lib/api";
+import { useProgress } from "@/hooks/useApi";
 import { History } from "lucide-react";
 
 interface ProgressItem {
@@ -21,16 +21,8 @@ interface ProgressItem {
 
 export default function HistoryPage() {
   const router = useRouter();
-  const [progress, setProgress] = useState<ProgressItem[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    api
-      .getProgress()
-      .then((data) => setProgress(data as ProgressItem[]))
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }, []);
+  const { data: rawProgress, isLoading: loading } = useProgress();
+  const progress = (rawProgress || []) as ProgressItem[];
 
   return (
     <div className="animate-fade-in">

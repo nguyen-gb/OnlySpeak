@@ -1,20 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
+import { useAdminStats } from "@/hooks/useApi";
 import { Users, BookOpen, MessageSquare, BarChart3 } from "lucide-react";
 
 export default function AdminDashboard() {
-  const [stats, setStats] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    api
-      .adminGetStats()
-      .then(setStats)
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }, []);
+  const { data: stats, isLoading: loading } = useAdminStats();
 
   return (
     <div className="animate-fade-in">

@@ -3,10 +3,11 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { api } from "@/lib/api";
+import { useTopic, useMasteryMap } from "@/hooks/useApi";
 import { ArrowLeft, Play, Users, MessageSquare, Trophy, Flame, Target, Zap } from "lucide-react";
 import styles from "./topicDetail.module.css";
 
+// ── Types and Helpers ────────────────────────────────────────────────────────
 interface Topic {
   id: string;
   title: string;
@@ -65,24 +66,11 @@ function getMasteryLabel(level: number) {
 
 export default function TopicDetailPage() {
   const params = useParams();
-  const [data, setData] = useState<TopicData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [masteryMap, setMasteryMap] = useState<Record<string, MasteryData>>({});
-
-  useEffect(() => {
-    if (params.id) {
-      Promise.all([
-        api.getTopic(params.id as string),
-        api.getMasteryMap().catch(() => ({})),
-      ])
-        .then(([topicData, mastery]: [unknown, unknown]) => {
-          setData(topicData as TopicData);
-          setMasteryMap((mastery as Record<string, MasteryData>) || {});
-        })
-        .catch(console.error)
-        .finally(() => setLoading(false));
-    }
-  }, [params.id]);
+  const topicId = params.id as string;
+  const { data: rawData, isLoading: topicLoading } = useTopic(topicId);
+  const data = rawData as TopicData | undefined;
+  const { data: masteryMap = {}, isLoading: masteryLoading } = useMasteryMap();
+  const loading = topicLoading || masteryLoading;
 
   if (loading) {
     return (

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuthStore } from "@/stores/authStore";
-import { api } from "@/lib/api";
+import { useStats, useReviewList } from "@/hooks/useApi";
 import {
   BookOpen,
   Target,
@@ -63,22 +63,12 @@ function getMasteryLabel(level: number) {
 
 export default function DashboardPage() {
   const { user } = useAuthStore();
-  const [stats, setStats] = useState<Stats | null>(null);
-  const [reviewList, setReviewList] = useState<ReviewItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data: rawStats, isLoading: statsLoading } = useStats();
+  const stats = rawStats as Stats | null;
+  const { data: rawReviewList, isLoading: reviewsLoading } = useReviewList();
+  const reviewList = (rawReviewList || []) as ReviewItem[];
 
-  useEffect(() => {
-    Promise.all([
-      api.getStats(),
-      api.getReviewList().catch(() => [])
-    ])
-      .then(([statsData, reviews]) => {
-        setStats(statsData as Stats);
-        setReviewList(reviews as ReviewItem[]);
-      })
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }, []);
+  const loading = statsLoading || reviewsLoading;
 
   const overallMastery = stats?.overall_mastery || 0;
   const masteryInfo = getMasteryLabel(overallMastery);

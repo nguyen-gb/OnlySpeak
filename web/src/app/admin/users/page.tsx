@@ -1,36 +1,24 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
+import { useState } from "react";
+import { useAdminUsers, useAdminToggleUser } from "@/hooks/useApi";
 import { Users, Shield, Ban, Check, AlertCircle } from "lucide-react";
 
 export default function AdminUsersPage() {
-  const [users, setUsers] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  const loadUsers = () => {
-    setLoading(true);
-    api
-      .adminGetUsers()
-      .then((data: any) => setUsers(data))
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(() => {
-    loadUsers();
-  }, []);
+  const { data: rawUsers, isLoading: loading } = useAdminUsers();
+  const users = (rawUsers || []) as any[];
+  const toggleMutation = useAdminToggleUser();
 
   const handleToggle = async (userId: string) => {
     try {
-      await api.adminToggleUser(userId);
-      loadUsers();
+      await toggleMutation.mutateAsync(userId);
       setSuccess("User status updated!");
       setTimeout(() => setSuccess(""), 3000);
     } catch (err: any) {
-      setError(err.message);
+      setError(err.message || "Failed to update status");
     }
   };
 

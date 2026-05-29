@@ -1,8 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
-import { api } from "@/lib/api";
+import {
+  useAdminConversations,
+  useAdminTopics,
+  useAdminCreateConversation,
+  useAdminDeleteConversation,
+  useAdminGenerateAudio,
+} from "@/hooks/useApi";
 import {
   Plus,
   Pencil,
@@ -16,9 +22,6 @@ import {
 } from "lucide-react";
 
 export default function AdminConversationsPage() {
-  const [conversations, setConversations] = useState<any[]>([]);
-  const [topics, setTopics] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
   const [topicFilter, setTopicFilter] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -38,32 +41,24 @@ export default function AdminConversationsPage() {
     lines: [] as { speaker: string; text_en: string; pronunciation_hint: string }[],
   });
 
-  const loadData = () => {
-    setLoading(true);
-    Promise.all([
-      api.adminGetConversations(topicFilter || undefined),
-      api.adminGetTopics(),
-    ])
-      .then(([convs, tops]: any) => {
-        setConversations(convs);
-        setTopics(tops);
-      })
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  };
+  const { data: rawConversations, isLoading: convsLoading } = useAdminConversations(topicFilter || undefined);
+  const conversations = (rawConversations || []) as any[];
+  const { data: rawTopics, isLoading: topicsLoading } = useAdminTopics();
+  const topics = (rawTopics || []) as any[];
+  const loading = convsLoading || topicsLoading;
 
-  useEffect(() => {
-    loadData();
-  }, [topicFilter]);
+  const createMutation = useAdminCreateConversation();
+  const deleteMutation = useAdminDeleteConversation();
+  const generateAudioMutation = useAdminGenerateAudio();
 
   const handleGenerateAudio = async (id: string) => {
     setGeneratingId(id);
     try {
-      await api.adminGenerateAudio(id);
+      await generateAudioMutation.mutateAsync(id);
       setSuccess("Audio generated successfully!");
       setTimeout(() => setSuccess(""), 3000);
     } catch (err: any) {
-      setError(err.message);
+      setError(err.message || "Failed to generate audio");
     } finally {
       setGeneratingId(null);
     }
@@ -72,12 +67,11 @@ export default function AdminConversationsPage() {
   const handleDelete = async (id: string) => {
     if (!confirm("Delete this conversation?")) return;
     try {
-      await api.adminDeleteConversation(id);
-      loadData();
+      await deleteMutation.mutateAsync(id);
       setSuccess("Deleted!");
       setTimeout(() => setSuccess(""), 3000);
     } catch (err: any) {
-      setError(err.message);
+      setError(err.message || "Failed to delete conversation");
     }
   };
 
@@ -112,7 +106,7 @@ export default function AdminConversationsPage() {
           line_order: i + 1,
         })),
       };
-      await api.adminCreateConversation(data);
+      await createMutation.mutateAsync(data);
       setSuccess("Conversation created!");
       setShowForm(false);
       setForm({
@@ -127,10 +121,9 @@ export default function AdminConversationsPage() {
         is_published: false,
         lines: [],
       });
-      loadData();
       setTimeout(() => setSuccess(""), 3000);
     } catch (err: any) {
-      setError(err.message);
+      setError(err.message || "Failed to create conversation");
     }
   };
 

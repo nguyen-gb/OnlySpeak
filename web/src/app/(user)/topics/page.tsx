@@ -2,23 +2,14 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { api } from "@/lib/api";
+import { useTopics } from "@/hooks/useApi";
 import { BookOpen, MessageSquare, ChevronRight } from "lucide-react";
 import styles from "./topics.module.css";
 
 export default function TopicsPage() {
-  const [topics, setTopics] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
   const [levelFilter, setLevelFilter] = useState("");
-
-  useEffect(() => {
-    setLoading(true);
-    api
-      .getTopics(levelFilter || undefined)
-      .then((data: any) => setTopics(data))
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }, [levelFilter]);
+  const { data: rawTopics, isLoading: loading } = useTopics(levelFilter || undefined);
+  const topics = (rawTopics || []) as any[];
 
   return (
     <div className="animate-fade-in">
