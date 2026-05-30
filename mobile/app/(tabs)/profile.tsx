@@ -1,9 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, View, Text, TouchableOpacity, StyleSheet, Image } from 'react-native';
+import { ActivityIndicator, View, Text, TouchableOpacity, StyleSheet, Image, Linking } from 'react-native';
 import { router } from 'expo-router';
 import { useAuthStore } from '../../stores/authStore';
 import { endpoints } from '../../lib/api';
-import { Award, Flame, LogOut, Trophy, User as UserIcon, Zap } from 'lucide-react-native';
+import { Award, Flame, LogOut, Mail, Phone, Trophy, User as UserIcon, Zap } from 'lucide-react-native';
+
+const feedbackEmail = 'vannguyen.tran.164@gmail.com';
+const feedbackPhone = '0395162022';
 
 export default function ProfileScreen() {
   const { user, logout } = useAuthStore();
@@ -52,6 +55,23 @@ export default function ProfileScreen() {
             </View>
           )}
         </View>
+        <View style={styles.contactCard}>
+          <Text style={styles.sectionTitle}>Feedback Contact</Text>
+          <TouchableOpacity
+            style={styles.contactRow}
+            onPress={() => Linking.openURL(`mailto:${feedbackEmail}?subject=OnlySpeak%20Feedback`)}
+          >
+            <Mail size={20} color="#ea3b92" />
+            <Text style={styles.contactText}>{feedbackEmail}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.contactRow}
+            onPress={() => Linking.openURL(`tel:${feedbackPhone}`)}
+          >
+            <Phone size={20} color="#10b981" />
+            <Text style={styles.contactText}>Phone/Zalo/WhatsApp/Telegram: {feedbackPhone}</Text>
+          </TouchableOpacity>
+        </View>
         <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
           <LogOut size={20} color="#ef4444" />
           <Text style={styles.logoutText}>Log Out</Text>
@@ -89,6 +109,9 @@ const styles = StyleSheet.create({
   statusText: { color: '#334155', fontSize: 12, fontWeight: '800' },
   section: { padding: 24, gap: 16 },
   statsCard: { backgroundColor: '#fff', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#e2e8f0' },
+  contactCard: { backgroundColor: '#fff', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#e2e8f0', gap: 10 },
+  contactRow: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#f8fafc', padding: 14, borderRadius: 12 },
+  contactText: { flex: 1, color: '#334155', fontSize: 14, fontWeight: '700' },
   sectionTitle: { color: '#0f172a', fontSize: 18, fontWeight: '900', marginBottom: 14 },
   statsGrid: { flexDirection: 'row', gap: 12 },
   statItem: { flex: 1, backgroundColor: '#f8fafc', borderRadius: 12, padding: 14, alignItems: 'center', gap: 5 },

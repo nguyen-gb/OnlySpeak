@@ -117,6 +117,20 @@
   flex-shrink: 0;
 }
 
+.feedbackLink {
+  color: var(--primary);
+}
+
+.feedbackLink:hover {
+  background: var(--primary-50);
+  color: var(--primary-dark);
+}
+
+[data-theme="dark"] .feedbackLink:hover {
+  background: rgba(234, 59, 146, 0.1);
+  color: var(--primary-400);
+}
+
 .userMenu {
   display: flex;
   align-items: center;
@@ -165,5 +179,17 @@
 
   .userName {
     display: none;
+  }
+}
+
+@media (max-width: 520px) {
+  .feedbackLink span {
+    display: none;
+  }
+
+  .feedbackLink {
+    width: 32px;
+    height: 32px;
+    padding: 0;
   }
 }

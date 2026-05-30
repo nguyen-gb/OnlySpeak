@@ -7,6 +7,8 @@ import {
   Mic,
   Users,
   ArrowRight,
+  Mail,
+  Phone,
   Sun,
   Moon,
   Sparkles,
@@ -189,7 +191,19 @@ export default function LandingPage() {
               <span className={styles.logoTextSpeak}>Speak</span>
             </span>
           </div>
-          <p>Learn English by speaking. Free forever.</p>
+          <div className={styles.footerContact}>
+            <div className={styles.contactLinks} aria-label="Feedback contact">
+              <a href="mailto:vannguyen.tran.164@gmail.com">
+                <Mail size={15} />
+                vannguyen.tran.164@gmail.com
+              </a>
+              <a href="tel:0395162022">
+                <Phone size={15} />
+                Phone/Zalo/WhatsApp/Telegram: 0395162022
+              </a>
+            </div>
+            <p>© 2026 OnlySpeak. Learn English by speaking. Free forever.</p>
+          </div>
         </div>
       </footer>
     </div>

@@ -9,6 +9,7 @@ import {
   Sun,
   Moon,
   LogOut,
+  Mail,
   User,
 } from "lucide-react";
 import styles from "./Header.module.css";
@@ -88,6 +89,17 @@ export default function Header() {
         </nav>
 
         <div className={styles.actions}>
+          {user && !isAdmin && (
+            <a
+              href="mailto:vannguyen.tran.164@gmail.com?subject=OnlySpeak%20Feedback"
+              className={`btn btn-sm btn-ghost ${styles.feedbackLink}`}
+              title="Send feedback by email"
+            >
+              <Mail size={16} />
+              <span>Feedback</span>
+            </a>
+          )}
+
           {user && user.role === "admin" && (
             <Link
               href={isAdmin ? "/dashboard" : "/admin"}
