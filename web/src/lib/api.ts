@@ -34,7 +34,7 @@ function clearTokens() {
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   const token = getAccessToken();
   if (token && config.headers) {
-    config.headers.Authorization = `Bearer ${token}`;
+    config.headers.set("Authorization", `Bearer ${token}`);
   }
   return config;
 });
@@ -55,11 +55,13 @@ async function tryRefresh(): Promise<boolean> {
 
   try {
     const res = await axios.post(
-      `${API_URL}/api/auth/refresh?refresh_token=${rt}`
+      `${API_URL}/api/auth/refresh`,
+      { refresh_token: rt }
     );
     setTokens(res.data.access_token, res.data.refresh_token);
     return true;
-  } catch {
+  } catch (error) {
+    console.error("Token refresh failed:", error);
     return false;
   }
 }
@@ -74,8 +76,11 @@ api.interceptors.response.use(
     if (!originalRequest) return Promise.reject(error);
 
     const endpoint = originalRequest.url || "";
+    const relativeUrl = endpoint.startsWith("http")
+      ? endpoint.replace(API_URL, "")
+      : endpoint;
     const isNonRefreshable = NON_REFRESHABLE.some((p) =>
-      endpoint.startsWith(p)
+      relativeUrl.startsWith(p)
     );
 
     if (error.response?.status === 401 && !isNonRefreshable && !originalRequest._retry) {
@@ -93,7 +98,7 @@ api.interceptors.response.use(
       if (refreshed) {
         const newToken = getAccessToken();
         if (originalRequest.headers) {
-          originalRequest.headers.Authorization = `Bearer ${newToken}`;
+          originalRequest.headers.set("Authorization", `Bearer ${newToken}`);
         }
         return api(originalRequest);
       }

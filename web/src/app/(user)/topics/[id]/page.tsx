@@ -29,7 +29,20 @@ interface TopicData {
   conversations: Conversation[];
 }
 
-const ROLE_SUCCESS_CAP = 2;
+const ROLE_SUCCESS_CAP_BY_MODE: Record<number, number> = {
+  1: 2,
+  2: 2,
+  3: 2,
+  4: 3,
+  5: 1,
+};
+const RELEASED_MODE_COUNT = 4;
+
+function getCompletedModeCount(modeScores?: Record<string, { passed?: boolean }>) {
+  return Array.from({ length: RELEASED_MODE_COUNT }, (_, index) => String(index + 1))
+    .filter((mode) => modeScores?.[mode]?.passed)
+    .length;
+}
 
 function TopicDetailSkeleton() {
   return (
@@ -77,11 +90,12 @@ function TopicDetailSkeleton() {
   );
 }
 
-function getRoleProgress(modeData?: { role_success_counts?: Record<string, number> }) {
+function getRoleProgress(mode: number, modeData?: { role_success_counts?: Record<string, number> }) {
   const roleCounts = modeData?.role_success_counts || {};
+  const cap = ROLE_SUCCESS_CAP_BY_MODE[mode] || 1;
   return {
-    a: Math.min(roleCounts.A || 0, ROLE_SUCCESS_CAP),
-    b: Math.min(roleCounts.B || 0, ROLE_SUCCESS_CAP),
+    a: Math.min(roleCounts.A || 0, cap),
+    b: Math.min(roleCounts.B || 0, cap),
   };
 }
 
@@ -146,7 +160,8 @@ export default function TopicDetailPage() {
             const masteryInfo = getMasteryLabel(masteryLevel);
             const practiceCount = mastery?.practice_count || 0;
             const streak = mastery?.streak_perfect || 0;
-            const currentMode = mastery?.current_mode || 1;
+            const currentMode = Math.min(mastery?.current_mode || 1, RELEASED_MODE_COUNT);
+            const completedModeCount = getCompletedModeCount(mastery?.mode_scores);
             const avgRT = mastery?.avg_response_time || 0;
 
             return (
@@ -164,7 +179,7 @@ export default function TopicDetailPage() {
                       </span>
                     )}
                     <span className={styles.modeBadge}>
-                       Mode {currentMode}/5
+                       Level {completedModeCount}/{RELEASED_MODE_COUNT}
                     </span>
                   </div>
                   {conv.situation && (
@@ -219,13 +234,17 @@ export default function TopicDetailPage() {
                         {masteryLevel < 95 && (() => {
                           const modeKey = String(currentMode);
                           const modeData = mastery?.mode_scores?.[modeKey];
-                          const successCount = modeData?.success_count || 0;
-                          const required = currentMode === 4 ? 5 : 3;
+                          const required = currentMode === 4 ? 5 : currentMode === 5 ? 2 : 3;
+                          const successCount = Math.min(modeData?.success_count || 0, required);
                           const remaining = Math.max(0, required - successCount);
-                          const roleProgress = currentMode < 4 ? getRoleProgress(modeData) : null;
+                          const roleProgress = getRoleProgress(currentMode, modeData);
                           return (
                             <span className={styles.masteryHint}>
-                              Need {remaining} more perfect sessions (≥90%) in Mode {currentMode}
+                              {currentMode === 4
+                                ? `Need ${remaining} more Speed Talker sessions (>=90% and tap within 3s)`
+                                : currentMode === 5
+                                  ? `Need ${remaining} more Fluent sessions (>=90%)`
+                                : `Need ${remaining} more perfect sessions (>=90%) in Level ${currentMode}`}
                               {roleProgress && (
                                 <span className={styles.roleProgressInline}>
                                   <span className={roleProgress.a > 0 ? styles.roleActive : styles.roleInactive}>Role A</span>

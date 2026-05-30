@@ -6,6 +6,7 @@ from app.database import get_db
 from app.models.user import User, AuthProvider
 from app.schemas.user import (
     GoogleLogin,
+    RefreshRequest,
     TokenResponse,
     UserResponse,
     UserUpdate,
@@ -91,7 +92,8 @@ async def google_login(data: GoogleLogin, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/refresh", response_model=TokenResponse)
-async def refresh(refresh_token: str, db: AsyncSession = Depends(get_db)):
+async def refresh(data: RefreshRequest, db: AsyncSession = Depends(get_db)):
+    refresh_token = data.refresh_token
     payload = verify_token(refresh_token)
     if not payload or payload.get("type") != "refresh":
         raise HTTPException(status_code=401, detail="Invalid refresh token")

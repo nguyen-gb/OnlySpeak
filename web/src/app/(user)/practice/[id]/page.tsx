@@ -89,11 +89,11 @@ type PracticeState =
   | "completed";
 
 const MODES = [
-  { id: 1, name: "Shadow Master", desc: "Listen and repeat simultaneously to mimic natural rhythm.", icon: "1" },
-  { id: 2, name: "Reader", desc: "Practice speaking with the support of dialogue text.", icon: "2" },
-  { id: 3, name: "Listener", desc: "Listen to your partner and respond without seeing text.", icon: "3" },
-  { id: 4, name: "Speed Talker", desc: "Respond within 3 seconds to build lightning reflexes.", icon: "4" },
-  { id: 5, name: "Fluent", desc: "Free conversation with AI to master the topic.", icon: "5" },
+  { id: 1, name: "Shadow Master", desc: "Listen, read, and repeat with full support.", icon: "1" },
+  { id: 2, name: "Reader", desc: "Read the visible dialogue aloud at your own pace.", icon: "2" },
+  { id: 3, name: "Listener", desc: "Listen to your partner and answer without seeing your line.", icon: "3" },
+  { id: 4, name: "Speed Talker", desc: "Tap to Speak within 3 seconds, then say the line from memory.", icon: "4" },
+  { id: 5, name: "Fluent", desc: "Hold a free conversation with AI using this topic.", icon: "5" },
 ];
 
 const MODE_REQUIRED_SUCCESSES: Record<number, number> = {
@@ -101,10 +101,18 @@ const MODE_REQUIRED_SUCCESSES: Record<number, number> = {
   2: 3,
   3: 3,
   4: 5,
+  5: 2,
 };
 
+const RELEASED_MODE_COUNT = 4;
 const SPEED_DRILL_TIMEOUT = 3.0;
-const ROLE_SUCCESS_CAP = 2;
+const ROLE_SUCCESS_CAP_BY_MODE: Record<number, number> = {
+  1: 2,
+  2: 2,
+  3: 2,
+  4: 3,
+  5: 1,
+};
 
 function PracticeSkeleton() {
   return (
@@ -147,10 +155,11 @@ function PracticeSkeleton() {
   );
 }
 
-function getRoleProgress(modeData?: { role_success_counts?: Record<string, number> }) {
+function getRoleProgress(mode: number, modeData?: { role_success_counts?: Record<string, number> }) {
   const roleCounts = modeData?.role_success_counts || {};
-  const a = Math.min(roleCounts.A || 0, ROLE_SUCCESS_CAP);
-  const b = Math.min(roleCounts.B || 0, ROLE_SUCCESS_CAP);
+  const cap = ROLE_SUCCESS_CAP_BY_MODE[mode] || 1;
+  const a = Math.min(roleCounts.A || 0, cap);
+  const b = Math.min(roleCounts.B || 0, cap);
   return { a, b };
 }
 
@@ -187,6 +196,7 @@ export default function PracticePage() {
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const chatAreaRef = useRef<HTMLDivElement | null>(null);
+  const speedTapTimeRef = useRef<number | null>(null);
   const {
     isListening: sttActive,
     transcript,
@@ -204,7 +214,7 @@ export default function PracticePage() {
 
   useEffect(() => {
     if (masteryData?.current_mode) {
-      setPracticeMode(Math.min(masteryData.current_mode, 5));
+      setPracticeMode(Math.min(masteryData.current_mode, RELEASED_MODE_COUNT));
     }
   }, [masteryData]);
 
@@ -291,7 +301,9 @@ export default function PracticePage() {
     if (practiceMode === 5) {
       handleFreeTalkInput(text);
     } else if (currentLine) {
-      const rt = turnStartTime ? (Date.now() - turnStartTime) / 1000 : 0;
+      const rt = practiceMode === 4
+        ? speedTapTimeRef.current ?? (turnStartTime ? (Date.now() - turnStartTime) / 1000 : 0)
+        : turnStartTime ? (Date.now() - turnStartTime) / 1000 : 0;
       const result = scorePronunciation(currentLine.text_en, text);
       setScores((prev) => [...prev, {
         lineIndex: currentLineIndex,
@@ -301,6 +313,7 @@ export default function PracticePage() {
         responseTime: rt
       }]);
       setCurrentResponseTime(rt);
+      speedTapTimeRef.current = null;
       setState("scored");
     }
   }, [state, practiceMode, currentLine, currentLineIndex, turnStartTime]);
@@ -398,7 +411,7 @@ export default function PracticePage() {
       setState("your_turn");
       setTurnStartTime(Date.now());
     }
-  }, [sttActive]);
+  }, [sttActive, state, transcript]);
 
   useEffect(() => {
     let timer: any;
@@ -431,7 +444,7 @@ export default function PracticePage() {
     return () => clearInterval(timer);
   }, [state, practiceMode, turnStartTime]);
 
-  const handleTimeout = () => {
+  function handleTimeout() {
     if (state !== "your_turn") return;
     setScores((prev) => [...prev, {
       lineIndex: currentLineIndex,
@@ -442,13 +455,14 @@ export default function PracticePage() {
     }]);
     setCurrentResponseTime(SPEED_DRILL_TIMEOUT);
     setState("scored");
-  };
+  }
 
   const handleStart = () => {
     setCurrentLineIndex(0);
     setScores([]);
     setChatHistory([]);
     setMasteryResult(null);
+    speedTapTimeRef.current = null;
     if (practiceMode === 5) {
       if (myRole === "B") {
         setIsAiThinking(true);
@@ -500,7 +514,14 @@ export default function PracticePage() {
     }
   };
 
-  const handleSpeak = () => { resetSpeech(); setState("listening"); startListening(); };
+  const handleSpeak = () => {
+    speedTapTimeRef.current = practiceMode === 4 && turnStartTime
+      ? (Date.now() - turnStartTime) / 1000
+      : null;
+    resetSpeech();
+    setState("listening");
+    startListening();
+  };
   const handleRetry = () => {
     if (practiceMode === 5) {
       setChatHistory(prev => prev.slice(0, -2));
@@ -647,7 +668,7 @@ export default function PracticePage() {
             <div className={styles.masteryCard}>
               <div className={styles.masteryTitle}>{mastery >= 95 ? "🏆 Conversation Mastered!" : "📊 Mastery Progress"}</div>
               <div className={styles.masteryBarLg}><div className={styles.masteryFillLg} style={{ width: `${mastery}%`, background: mastery >= 95 ? "linear-gradient(90deg, #10b981, #059669)" : "linear-gradient(90deg, var(--primary), var(--primary-600))" }} /></div>
-              <div className={styles.masteryStats}><span className={styles.masteryLevel}>{mastery.toFixed(1)}%</span><span className={styles.masteryDetail}>🔥 Streak: {streak}/5</span><span className={styles.masteryDetail}>📖 Mode: {practiceMode}/5</span></div>
+              <div className={styles.masteryStats}><span className={styles.masteryLevel}>{mastery.toFixed(1)}%</span><span className={styles.masteryDetail}>🔥 Streak: {streak}/5</span><span className={styles.masteryDetail}>📖 Level: {practiceMode}/{RELEASED_MODE_COUNT}</span></div>
             </div>
           )}
           <div className={styles.completedActions}>
@@ -675,42 +696,32 @@ export default function PracticePage() {
             </div>
           </div>
           <div className={styles.selectionSection}>
-            <h2 className={styles.selectTitle}>Practice Mode</h2>
+            <h2 className={styles.selectTitle}>Practice Level</h2>
             <div className={styles.modeList}>
               {MODES.map((m) => {
-                const isUnlocked = m.id <= (masteryData?.current_mode || 1);
+                const isComingSoon = m.id === 5;
+                const isUnlocked = !isComingSoon && m.id <= (masteryData?.current_mode || 1);
                 const isLocked = !isUnlocked;
                 
                 let progressValue = 0;
                 let progressLabel = "";
-                if (isLocked && m.id > 1) {
-                   const prevModeData = masteryData?.mode_scores?.[(m.id - 1).toString()];
-                   if (m.id === 5 && prevModeData?.passed && prevModeData?.passed_at) {
-                     const passedAt = new Date(prevModeData.passed_at).getTime();
-                     const daysSincePassed = (Date.now() - passedAt) / 86400000;
-                     progressLabel = `${Math.max(0, Math.floor(daysSincePassed))}/30 days`;
-                   } else {
-                     const successCount = prevModeData?.success_count || 0;
-                     const required = MODE_REQUIRED_SUCCESSES[m.id - 1] || 1;
-                     progressLabel = `${successCount}/${required}`;
-                   }
-                } else if (!isLocked) {
-                   const currentModeData = masteryData?.mode_scores?.[m.id.toString()];
-                   const successCount = currentModeData?.success_count || 0;
-                   const required = MODE_REQUIRED_SUCCESSES[m.id] || 1;
-                   progressValue = Math.min(Math.round((successCount / required) * 100), 100);
-                   progressLabel = m.id === 5 ? "Fluent" : `${successCount}/${required}`;
+                const currentModeData = masteryData?.mode_scores?.[m.id.toString()];
+                const required = MODE_REQUIRED_SUCCESSES[m.id] || 1;
+                const successCount = Math.min(currentModeData?.success_count || 0, required);
+                if (MODE_REQUIRED_SUCCESSES[m.id]) {
+                  progressValue = Math.min(Math.round((successCount / required) * 100), 100);
+                  progressLabel = `${successCount}/${required}`;
+                } else if (m.id === 5) {
+                  progressLabel = "Soon";
                 }
                 const prevMode = MODES.find(mod => mod.id === m.id - 1);
                 const unlockRequirement = m.id === 5
-                  ? "Maintain Level 4 through SRS for 30 days"
-                  : `Unlock: Score 90%+ x${MODE_REQUIRED_SUCCESSES[m.id - 1] || 1} in ${prevMode?.name || "previous level"}`;
-                const detailMode = isLocked ? m.id - 1 : m.id;
-                const detailData = isLocked
-                  ? masteryData?.mode_scores?.[(m.id - 1).toString()]
-                  : masteryData?.mode_scores?.[m.id.toString()];
-                const roleProgress = (MODE_REQUIRED_SUCCESSES[detailMode] || 0) === 3
-                  ? getRoleProgress(detailData)
+                  ? "Coming soon: AI free conversation is in development"
+                  : m.id === 4
+                    ? "Unlock: Score 90%+ x3 in Listener"
+                    : `Unlock: Score 90%+ x${MODE_REQUIRED_SUCCESSES[m.id - 1] || 1} in ${prevMode?.name || "previous level"}`;
+                const roleProgress = MODE_REQUIRED_SUCCESSES[m.id]
+                  ? getRoleProgress(m.id, currentModeData)
                   : null;
 
                 return (
@@ -787,12 +798,14 @@ export default function PracticePage() {
             const isCurrent = i === currentLineIndex;
             let showText = true;
             if (practiceMode === 3 && isMine && isCurrent && state !== "scored") showText = false;
+            if (practiceMode === 4 && isMine && isCurrent && state === "listening") showText = false;
+            const showReplay = practiceMode !== 2 && practiceMode !== 4;
             return (
               <div key={line.id} className={`${styles.bubble} ${isMine ? styles.bubbleMine : styles.bubblePartner} ${isCurrent ? styles.bubbleCurrent : ""} ${isPast ? styles.bubblePast : ""}`}>
                 <div className={styles.bubbleRole}>{line.speaker === "A" ? conv.role_a_name : conv.role_b_name}</div>
                 <div className={styles.bubbleContent}>
                   {showText ? <p className={styles.bubbleText}>{line.text_en}</p> : <div className={styles.hiddenTextPlaceholder}><Zap size={14} /> Listen & respond...</div>}
-                  {practiceMode !== 2 && (
+                  {showReplay && (
                     <button className={`${styles.replayBtn} ${isReplayDisabled ? styles.replayBtnDisabled : ""}`} onClick={() => replayLine(line)} disabled={isReplayDisabled} aria-label="Replay line"><Volume2 size={14} /></button>
                   )}
                 </div>
@@ -877,7 +890,11 @@ export default function PracticePage() {
                   </div>
                   <div className={styles.scoredActions}>
                     <button className="btn btn-primary" onClick={moveToNext}><Check size={16} /> Continue</button>
-                    <button className="btn btn-secondary" onClick={handleRetry}><RotateCcw size={16} /> Retry</button>
+                    {practiceMode === 4 ? (
+                      <button className="btn btn-secondary" onClick={handleStart}><RotateCcw size={16} /> Restart Conversation</button>
+                    ) : (
+                      <button className="btn btn-secondary" onClick={handleRetry}><RotateCcw size={16} /> Retry</button>
+                    )}
                   </div>
                 </>
               );

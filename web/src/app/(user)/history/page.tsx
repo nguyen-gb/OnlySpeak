@@ -16,7 +16,20 @@ interface ProgressItem {
   pronunciation_score?: number;
   is_completed: boolean;
   practice_count: number;
+  mode_scores?: Record<string, { passed?: boolean }>;
   last_practiced_at: string;
+}
+
+const RELEASED_LEVEL_COUNT = 4;
+
+function getCompletedLevelCount(modeScores?: Record<string, { passed?: boolean }>) {
+  return Array.from({ length: RELEASED_LEVEL_COUNT }, (_, index) => String(index + 1))
+    .filter((level) => modeScores?.[level]?.passed)
+    .length;
+}
+
+function formatRoles(rolePlayed: string) {
+  return rolePlayed.split("/").filter(Boolean).join(" + ");
 }
 
 export default function HistoryPage() {
@@ -48,7 +61,8 @@ export default function HistoryPage() {
               <tr>
                 <th>Date</th>
                 <th>Conversation</th>
-                <th>Role</th>
+                <th>Roles</th>
+                <th>Level</th>
                 <th>Progress</th>
                 <th>Score</th>
                 <th>Status</th>
@@ -81,10 +95,19 @@ export default function HistoryPage() {
                     ) : null}
                   </td>
                   <td>
-                    <span className="badge badge-primary">Role {p.role_played}</span>
+                    <span className="badge badge-primary" style={{ whiteSpace: "nowrap" }}>
+                      {formatRoles(p.role_played)}
+                    </span>
                   </td>
                   <td>
-                    {p.completed_lines}/{p.total_lines} lines
+                    <span style={{ whiteSpace: "nowrap", fontSize: 14, color: "var(--text-secondary)" }}>
+                      Level {getCompletedLevelCount(p.mode_scores)}/{RELEASED_LEVEL_COUNT}
+                    </span>
+                  </td>
+                  <td>
+                    <span style={{ fontSize: 14, color: "var(--text-secondary)" }}>
+                      {p.completed_lines}/{p.total_lines} lines
+                    </span>
                   </td>
                   <td>
                     {p.pronunciation_score ? (
@@ -112,7 +135,9 @@ export default function HistoryPage() {
                       <span className="badge badge-warning">In Progress</span>
                     )}
                   </td>
-                  <td>{p.practice_count}×</td>
+                  <td>
+                    <span style={{ fontSize: 14, color: "var(--text-secondary)" }}>{p.practice_count}×</span>
+                  </td>
                 </tr>
               ))}
             </tbody>

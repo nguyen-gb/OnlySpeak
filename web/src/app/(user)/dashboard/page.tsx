@@ -22,6 +22,7 @@ interface ReviewItem {
     id: string;
     conversation_id: string;
     current_mode: number;
+    mode_scores?: Record<string, { passed?: boolean }>;
   };
   conversation_title: string;
   conversation_situation: string;
@@ -45,10 +46,19 @@ interface RecentProgress {
   conversation_situation?: string;
   role_played: string;
   current_mode: number;
+  mode_scores?: Record<string, { passed?: boolean }>;
   mastery_level?: number;
   avg_response_time?: number;
   is_completed: boolean;
   last_practiced_at: string;
+}
+
+const RELEASED_MODE_COUNT = 4;
+
+function getCompletedModeCount(modeScores?: Record<string, { passed?: boolean }>) {
+  return Array.from({ length: RELEASED_MODE_COUNT }, (_, index) => String(index + 1))
+    .filter((mode) => modeScores?.[mode]?.passed)
+    .length;
 }
 
 function getMasteryLabel(level: number) {
@@ -166,7 +176,7 @@ export default function DashboardPage() {
                 <div className={styles.reviewCardInfo}>
                    <h3>{item.conversation_title}</h3>
                    <div className={styles.reviewMeta}>
-                      <span className={styles.modeIndicator}>Mode {item.progress.current_mode}</span>
+                      <span className={styles.modeIndicator}>Level {getCompletedModeCount(item.progress.mode_scores)}/{RELEASED_MODE_COUNT}</span>
                       <span className={styles.overdueText}>
                         <Clock size={12} /> {item.overdue_days > 0 ? `${item.overdue_days}d overdue` : "Due today"}
                       </span>
@@ -267,7 +277,7 @@ export default function DashboardPage() {
                     <span className={styles.recentTitle}>
                       {p.conversation_title || `Conversation ${String(p.conversation_id).slice(0, 8)}`}
                     </span>
-                    <span className={styles.recentRole}>Role {p.role_played} (Mode {p.current_mode})</span>
+                    <span className={styles.recentRole}>Role {p.role_played} (Level {getCompletedModeCount(p.mode_scores)}/{RELEASED_MODE_COUNT})</span>
                     <span className={styles.recentDate}>
                       {new Date(p.last_practiced_at).toLocaleDateString()}
                     </span>

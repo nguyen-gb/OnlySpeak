@@ -26,9 +26,15 @@ MODE_UNLOCK_RULES = {
     2: {"score": 90, "successes": 3},  # Reader
     3: {"score": 90, "successes": 3},  # Listener
     4: {"score": 90, "successes": 5, "response_time": 3.0},  # Speed Talker
+    5: {"score": 90, "successes": 2},  # Fluent
 }
-FLUENT_REVIEW_WINDOW_DAYS = 30
-ROLE_SUCCESS_CAP_FOR_THREE_SUCCESS_MODES = 2
+ROLE_SUCCESS_CAP_BY_MODE = {
+    1: 2,
+    2: 2,
+    3: 2,
+    4: 3,
+    5: 1,
+}
 
 
 def _role_key(role: str | None) -> str | None:
@@ -102,14 +108,17 @@ def _empty_mode_data() -> dict:
 
 
 def _effective_success_count(data: dict, mode: int) -> int:
-    required = MODE_UNLOCK_RULES.get(mode, {}).get("successes", 1)
+    required = MODE_UNLOCK_RULES.get(mode, {}).get("successes")
     role_counts = data.get("role_success_counts") or {}
-    if required == 3 and role_counts:
-        return sum(
-            min(int(role_counts.get(role) or 0), ROLE_SUCCESS_CAP_FOR_THREE_SUCCESS_MODES)
+    role_cap = ROLE_SUCCESS_CAP_BY_MODE.get(mode)
+    if role_cap and role_counts:
+        count = sum(
+            min(int(role_counts.get(role) or 0), role_cap)
             for role in ("A", "B")
         )
-    return int(data.get("total_success_count") or data.get("success_count") or 0)
+    else:
+        count = int(data.get("total_success_count") or data.get("success_count") or 0)
+    return min(count, int(required)) if required else count
 
 
 def _normalize_mode_data(raw: dict | None, mode: int, role_played: str | None = None) -> dict:
@@ -176,22 +185,7 @@ def _calculate_current_mode(mode_scores: dict, *, now: datetime | None = None) -
     if not mode4["passed"]:
         return unlocked
 
-    passed_at = mode4.get("passed_at")
-    last_success_at = mode4.get("last_success_at")
-    if passed_at and last_success_at:
-        try:
-            passed = datetime.fromisoformat(passed_at)
-            last_success = datetime.fromisoformat(last_success_at)
-            if passed.tzinfo is None:
-                passed = passed.replace(tzinfo=timezone.utc)
-            if last_success.tzinfo is None:
-                last_success = last_success.replace(tzinfo=timezone.utc)
-            if last_success - passed >= timedelta(days=FLUENT_REVIEW_WINDOW_DAYS):
-                return 5
-        except (TypeError, ValueError):
-            pass
-
-    return 4
+    return 5
 
 
 def _merge_mode_scores(base: dict, incoming: dict, role_played: str | None = None) -> dict:
@@ -262,6 +256,47 @@ def _to_response(p: UserProgress, conversation: Conversation | None = None) -> P
         last_practiced_at=p.last_practiced_at,
         created_at=p.created_at,
     )
+
+
+def _to_grouped_response(items: list[UserProgress], conversation: Conversation | None = None) -> ProgressResponse:
+    ordered = sorted(items, key=lambda item: item.last_practiced_at, reverse=True)
+    latest = ordered[0]
+    response = _to_response(latest, conversation)
+
+    roles = sorted({_role_key(p.role_played.value) or p.role_played.value for p in ordered})
+    merged_scores: dict = {}
+    scores_history: list[float] = []
+    response_times: list[float] = []
+    for progress in ordered:
+        merged_scores = _merge_mode_scores(
+            merged_scores,
+            progress.mode_scores or {},
+            progress.role_played.value,
+        )
+        scores_history.extend(progress.scores_history or [])
+        response_times.extend(progress.response_times or [])
+
+    scores = [p.pronunciation_score for p in ordered if p.pronunciation_score is not None]
+    response.role_played = "/".join(roles)
+    response.completed_lines = sum(p.completed_lines for p in ordered)
+    response.total_lines = sum(p.total_lines for p in ordered)
+    response.is_completed = all(p.is_completed for p in ordered)
+    response.pronunciation_score = round(sum(scores) / len(scores), 1) if scores else None
+    response.practice_count = sum(p.practice_count for p in ordered)
+    response.best_score = max((p.best_score for p in ordered), default=0)
+    response.streak_perfect = max((p.streak_perfect for p in ordered), default=0)
+    response.mastery_level = max((p.mastery_level for p in ordered), default=0)
+    response.scores_history = scores_history[-MAX_HISTORY:]
+    response.current_mode = _calculate_current_mode(merged_scores)
+    response.mode_scores = merged_scores
+    response.avg_response_time = round(sum(response_times) / len(response_times), 2) if response_times else 0
+    response.next_review_at = min(
+        (p.next_review_at for p in ordered if p.next_review_at is not None),
+        default=latest.next_review_at,
+    )
+    response.last_practiced_at = latest.last_practiced_at
+    response.created_at = min(p.created_at for p in ordered)
+    return response
 
 
 @router.post("", response_model=ProgressResponse)
@@ -447,7 +482,18 @@ async def get_progress(
         .limit(50)
     )
     items = result.all()
-    return [_to_response(p, c) for p, c in items]
+    grouped: dict[str, dict] = {}
+    for progress, conversation in items:
+        conv_key = str(progress.conversation_id)
+        if conv_key not in grouped:
+            grouped[conv_key] = {"conversation": conversation, "progress": []}
+        grouped[conv_key]["progress"].append(progress)
+
+    responses = [
+        _to_grouped_response(group["progress"], group["conversation"])
+        for group in grouped.values()
+    ]
+    return sorted(responses, key=lambda item: item.last_practiced_at, reverse=True)[:50]
 
 
 @router.get("/stats", response_model=ProgressStatsResponse)
@@ -508,6 +554,32 @@ async def get_stats(
         .limit(10)
     )
     recent_items = recent.all()
+    recent_conv_ids = []
+    for progress, _ in recent_items:
+        if progress.conversation_id not in recent_conv_ids:
+            recent_conv_ids.append(progress.conversation_id)
+
+    grouped_recent: dict[str, dict] = {}
+    if recent_conv_ids:
+        all_recent_progress = await db.execute(
+            select(UserProgress, Conversation)
+            .join(Conversation, UserProgress.conversation_id == Conversation.id)
+            .where(
+                UserProgress.user_id == user.id,
+                UserProgress.conversation_id.in_(recent_conv_ids),
+            )
+        )
+        for progress, conversation in all_recent_progress.all():
+            conv_key = str(progress.conversation_id)
+            if conv_key not in grouped_recent:
+                grouped_recent[conv_key] = {"conversation": conversation, "progress": []}
+            grouped_recent[conv_key]["progress"].append(progress)
+
+    recent_progress = []
+    for conv_id in recent_conv_ids:
+        group = grouped_recent.get(str(conv_id))
+        if group:
+            recent_progress.append(_to_grouped_response(group["progress"], group["conversation"]))
 
     return ProgressStatsResponse(
         total_practiced=total_practiced,
@@ -517,7 +589,7 @@ async def get_stats(
         total_mastered=total_mastered or 0,
         overall_mastery=round(overall_mastery, 1) if overall_mastery else 0.0,
         due_for_review=due_count or 0,
-        recent_progress=[_to_response(p, c) for p, c in recent_items],
+        recent_progress=recent_progress,
     )
 
 
@@ -580,13 +652,42 @@ async def get_review_list(
         .order_by(UserProgress.next_review_at.asc())
     )
     items = result.all()
+    review_conv_ids = []
+    overdue_by_conv: dict[str, float] = {}
+    for progress, _ in items:
+        conv_key = str(progress.conversation_id)
+        if progress.conversation_id not in review_conv_ids:
+            review_conv_ids.append(progress.conversation_id)
+        overdue = (now - progress.next_review_at).total_seconds() / 86400
+        overdue_by_conv[conv_key] = max(overdue_by_conv.get(conv_key, overdue), overdue)
+
+    grouped_review: dict[str, dict] = {}
+    if review_conv_ids:
+        all_review_progress = await db.execute(
+            select(UserProgress, Conversation)
+            .join(Conversation, UserProgress.conversation_id == Conversation.id)
+            .where(
+                UserProgress.user_id == user.id,
+                UserProgress.conversation_id.in_(review_conv_ids),
+            )
+        )
+        for progress, conversation in all_review_progress.all():
+            conv_key = str(progress.conversation_id)
+            if conv_key not in grouped_review:
+                grouped_review[conv_key] = {"conversation": conversation, "progress": []}
+            grouped_review[conv_key]["progress"].append(progress)
+
     review_items = []
-    for p, c in items:
-        overdue = (now - p.next_review_at).total_seconds() / 86400
+    for conv_id in review_conv_ids:
+        conv_key = str(conv_id)
+        group = grouped_review.get(conv_key)
+        if not group:
+            continue
+        response = _to_grouped_response(group["progress"], group["conversation"])
         review_items.append({
-            "progress": _to_response(p),
-            "conversation_title": c.title,
-            "conversation_situation": c.situation,
-            "overdue_days": round(overdue, 1)
+            "progress": response,
+            "conversation_title": group["conversation"].title,
+            "conversation_situation": group["conversation"].situation,
+            "overdue_days": round(overdue_by_conv.get(conv_key, 0), 1)
         })
     return review_items
