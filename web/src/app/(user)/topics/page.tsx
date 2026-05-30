@@ -1,15 +1,49 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useTopics } from "@/hooks/useApi";
 import { BookOpen, MessageSquare, ChevronRight } from "lucide-react";
 import styles from "./topics.module.css";
 
+interface Topic {
+  id: string;
+  title: string;
+  description?: string;
+  level: string;
+  icon: string;
+  conversation_count: number;
+}
+
+function TopicsSkeleton() {
+  return (
+    <div className={styles.topicGrid} aria-label="Loading topics">
+      {Array.from({ length: 6 }).map((_, i) => (
+        <div
+          key={i}
+          className={`${styles.topicCard} ${styles.topicSkeletonCard}`}
+          style={{ animationDelay: `${i * 0.04}s` }}
+        >
+          <div className={`skeleton ${styles.topicSkeletonIcon}`} />
+          <div className={styles.topicContent}>
+            <div className={`skeleton skeleton-title ${styles.skeletonTitle}`} />
+            <div className={`skeleton skeleton-text ${styles.skeletonDesc}`} />
+            <div className={styles.topicMeta}>
+              <div className={`skeleton ${styles.skeletonBadge}`} />
+              <div className={`skeleton skeleton-text ${styles.skeletonCount}`} />
+            </div>
+          </div>
+          <div className={`skeleton ${styles.skeletonArrow}`} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function TopicsPage() {
   const [levelFilter, setLevelFilter] = useState("");
   const { data: rawTopics, isLoading: loading } = useTopics(levelFilter || undefined);
-  const topics = (rawTopics || []) as any[];
+  const topics = (rawTopics || []) as Topic[];
 
   return (
     <div className="animate-fade-in">
@@ -31,9 +65,7 @@ export default function TopicsPage() {
       </div>
 
       {loading ? (
-        <div style={{ display: "flex", justifyContent: "center", padding: 60 }}>
-          <div className="spinner spinner-lg" />
-        </div>
+        <TopicsSkeleton />
       ) : topics.length === 0 ? (
         <div className="empty-state">
           <BookOpen size={64} />

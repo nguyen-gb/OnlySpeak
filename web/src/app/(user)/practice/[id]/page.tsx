@@ -106,6 +106,47 @@ const MODE_REQUIRED_SUCCESSES: Record<number, number> = {
 const SPEED_DRILL_TIMEOUT = 3.0;
 const ROLE_SUCCESS_CAP = 2;
 
+function PracticeSkeleton() {
+  return (
+    <div className={`${styles.container} animate-fade-in`} aria-label="Loading practice">
+      <div className={`skeleton skeleton-text ${styles.backSkeleton}`} />
+      <div className={styles.selectCard}>
+        <div className={`skeleton skeleton-title ${styles.practiceTitleSkeleton}`} />
+        <div className={`skeleton skeleton-text ${styles.practiceSituationSkeleton}`} />
+        <div className={styles.selectionSection}>
+          <div className={`skeleton skeleton-text ${styles.sectionLabelSkeleton}`} />
+          <div className={styles.roleGrid}>
+            <div className={styles.roleCard}>
+              <div className={`skeleton ${styles.roleAvatarSkeleton}`} />
+              <div className={`skeleton skeleton-text ${styles.roleNameSkeleton}`} />
+            </div>
+            <div className={styles.roleCard}>
+              <div className={`skeleton ${styles.roleAvatarSkeleton}`} />
+              <div className={`skeleton skeleton-text ${styles.roleNameSkeleton}`} />
+            </div>
+          </div>
+        </div>
+        <div className={styles.selectionSection}>
+          <div className={`skeleton skeleton-text ${styles.sectionLabelSkeleton}`} />
+          <div className={styles.modeList}>
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className={styles.modeItem}>
+                <span className={`skeleton ${styles.modeIconSkeleton}`} />
+                <div className={styles.modeInfo}>
+                  <div className={`skeleton skeleton-title ${styles.modeNameSkeleton}`} />
+                  <div className={`skeleton skeleton-text ${styles.modeDescSkeleton}`} />
+                </div>
+                <span className={`skeleton ${styles.modeProgressSkeleton}`} />
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className={`skeleton ${styles.startButtonSkeleton}`} />
+      </div>
+    </div>
+  );
+}
+
 function getRoleProgress(modeData?: { role_success_counts?: Record<string, number> }) {
   const roleCounts = modeData?.role_success_counts || {};
   const a = Math.min(roleCounts.A || 0, ROLE_SUCCESS_CAP);
@@ -575,7 +616,7 @@ export default function PracticePage() {
     }
   }, [state, stopListening, resetSpeech]);
 
-  if (loading) return <div className="flex-center p-80"><div className="spinner spinner-lg" /></div>;
+  if (loading) return <PracticeSkeleton />;
   if (!conv) return <div className="empty-state"><h3>Conversation not found</h3></div>;
 
   if (state === "completed") {

@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { useTopic, useMasteryMap } from "@/hooks/useApi";
@@ -30,22 +29,53 @@ interface TopicData {
   conversations: Conversation[];
 }
 
-interface MasteryData {
-  mastery_level: number;
-  practice_count: number;
-  streak_perfect: number;
-  current_mode: number;
-  avg_response_time: number;
-  mode_scores?: Record<string, {
-    best?: number;
-    streak?: number;
-    success_count?: number;
-    role_success_counts?: Record<string, number>;
-    passed?: boolean;
-  }>;
-}
-
 const ROLE_SUCCESS_CAP = 2;
+
+function TopicDetailSkeleton() {
+  return (
+    <div className="animate-fade-in" aria-label="Loading topic">
+      <div className={`skeleton skeleton-text ${styles.backSkeleton}`} />
+      <div className={styles.topicHeader}>
+        <div className={`skeleton ${styles.topicIconBig}`} />
+        <div className={styles.headerSkeletonContent}>
+          <div className={`skeleton skeleton-title ${styles.headerTitleSkeleton}`} />
+          <div className={`skeleton skeleton-text ${styles.headerDescSkeleton}`} />
+          <div className={`skeleton ${styles.headerBadgeSkeleton}`} />
+        </div>
+      </div>
+      <div className={`skeleton skeleton-title ${styles.sectionTitleSkeleton}`} />
+      <div className={styles.convList}>
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div
+            key={i}
+            className={`${styles.convCard} ${styles.convSkeletonCard}`}
+            style={{ animationDelay: `${i * 0.04}s` }}
+          >
+            <div className={styles.convInfo}>
+              <div className={styles.convTitleRow}>
+                <div className={`skeleton skeleton-title ${styles.convTitleSkeleton}`} />
+                <div className={`skeleton ${styles.convModeSkeleton}`} />
+              </div>
+              <div className={`skeleton skeleton-text ${styles.convSituationSkeleton}`} />
+              <div className={styles.convMeta}>
+                <div className={`skeleton skeleton-text ${styles.convMetaSkeletonWide}`} />
+                <div className={`skeleton skeleton-text ${styles.convMetaSkeleton}`} />
+              </div>
+              <div className={styles.masterySection}>
+                <div className={styles.masteryHeader}>
+                  <div className={`skeleton skeleton-text ${styles.masteryLabelSkeleton}`} />
+                  <div className={`skeleton skeleton-text ${styles.masteryPercentSkeleton}`} />
+                </div>
+                <div className={`skeleton ${styles.masteryBar}`} />
+              </div>
+            </div>
+            <div className={`skeleton ${styles.convButtonSkeleton}`} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function getRoleProgress(modeData?: { role_success_counts?: Record<string, number> }) {
   const roleCounts = modeData?.role_success_counts || {};
@@ -72,13 +102,7 @@ export default function TopicDetailPage() {
   const { data: masteryMap = {}, isLoading: masteryLoading } = useMasteryMap();
   const loading = topicLoading || masteryLoading;
 
-  if (loading) {
-    return (
-      <div style={{ display: "flex", justifyContent: "center", padding: 80 }}>
-        <div className="spinner spinner-lg" />
-      </div>
-    );
-  }
+  if (loading) return <TopicDetailSkeleton />;
 
   if (!data) {
     return <div className="empty-state"><h3>Topic not found</h3></div>;

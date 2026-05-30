@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuthStore } from "@/stores/authStore";
 import { useStats, useReviewList } from "@/hooks/useApi";
@@ -59,6 +58,50 @@ function getMasteryLabel(level: number) {
   if (level >= 25) return { text: "Beginner", color: "#8b5cf6" };
   if (level > 0) return { text: "Started", color: "#6b7280" };
   return { text: "New", color: "#cbd5e1" };
+}
+
+function DashboardSkeleton() {
+  return (
+    <>
+      <div className={styles.statsGrid} aria-label="Loading stats">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="stat-card">
+            <div className={`skeleton ${styles.statIconSkeleton}`} />
+            <div className={`skeleton ${styles.statValueSkeleton}`} />
+            <div className={`skeleton skeleton-text ${styles.statLabelSkeleton}`} />
+          </div>
+        ))}
+      </div>
+      <div className={styles.masteryOverview}>
+        <div className={styles.masteryOverviewHeader}>
+          <div className={`skeleton skeleton-title ${styles.masteryTitleSkeleton}`} />
+          <div className={`skeleton ${styles.masteryBadgeSkeleton}`} />
+        </div>
+        <div className={styles.masteryBarContainer}>
+          <div className={`skeleton ${styles.masteryBar}`} />
+          <div className={`skeleton ${styles.masteryPercentSkeleton}`} />
+        </div>
+      </div>
+      <div className={styles.recent}>
+        <div className={`skeleton skeleton-title ${styles.recentHeadingSkeleton}`} />
+        <div className={styles.recentList}>
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className={`${styles.recentItem} ${styles.recentSkeletonItem}`}>
+              <div className={styles.recentInfo}>
+                <div className={`skeleton skeleton-title ${styles.recentTitleSkeleton}`} />
+                <div className={`skeleton skeleton-text ${styles.recentRoleSkeleton}`} />
+                <div className={`skeleton skeleton-text ${styles.recentDateSkeleton}`} />
+              </div>
+              <div className={styles.recentMeta}>
+                <div className={`skeleton ${styles.recentPillSkeleton}`} />
+                <div className={`skeleton ${styles.recentPillSkeletonWide}`} />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </>
+  );
 }
 
 export default function DashboardPage() {
@@ -146,6 +189,10 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {loading ? (
+        <DashboardSkeleton />
+      ) : (
+        <>
       <div className={styles.statsGrid}>
         <div className="stat-card">
           <div className="stat-icon"><MessageCircle size={22} /></div>
@@ -255,6 +302,8 @@ export default function DashboardPage() {
             Explore Topics <ArrowRight size={16} />
           </Link>
         </div>
+      )}
+        </>
       )}
     </div>
   );

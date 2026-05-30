@@ -90,3 +90,47 @@
   transform: translateX(4px);
   color: var(--primary);
 }
+
+.topicSkeletonCard {
+  pointer-events: none;
+}
+
+.topicSkeletonCard:hover {
+  border-color: var(--border);
+  box-shadow: none;
+  transform: none;
+}
+
+.topicSkeletonIcon {
+  width: 60px;
+  height: 60px;
+  border-radius: var(--radius);
+  flex-shrink: 0;
+}
+
+.skeletonTitle {
+  width: min(260px, 70%);
+  margin-bottom: 10px;
+}
+
+.skeletonDesc {
+  width: min(420px, 92%);
+  margin-bottom: 12px;
+}
+
+.skeletonBadge {
+  width: 82px;
+  height: 24px;
+  border-radius: var(--radius-full);
+}
+
+.skeletonCount {
+  width: 140px;
+}
+
+.skeletonArrow {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+}

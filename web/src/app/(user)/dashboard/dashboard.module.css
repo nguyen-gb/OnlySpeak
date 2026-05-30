@@ -380,6 +380,79 @@
   margin-bottom: 20px;
 }
 
+.statIconSkeleton {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius);
+}
+
+.statValueSkeleton {
+  width: 76px;
+  height: 30px;
+  border-radius: var(--radius-full);
+}
+
+.statLabelSkeleton {
+  width: 96px;
+}
+
+.masteryTitleSkeleton {
+  width: 190px;
+}
+
+.masteryBadgeSkeleton {
+  width: 104px;
+  height: 26px;
+  border-radius: var(--radius-full);
+}
+
+.masteryPercentSkeleton {
+  width: 60px;
+  height: 28px;
+  border-radius: var(--radius-full);
+}
+
+.recentHeadingSkeleton {
+  width: 150px;
+  margin-bottom: 16px;
+}
+
+.recentSkeletonItem {
+  pointer-events: none;
+}
+
+.recentSkeletonItem:hover {
+  border-color: var(--border);
+  transform: none;
+}
+
+.recentTitleSkeleton {
+  width: min(280px, 64vw);
+  height: 16px;
+}
+
+.recentRoleSkeleton {
+  width: 150px;
+}
+
+.recentDateSkeleton {
+  width: 92px;
+}
+
+.recentPillSkeleton,
+.recentPillSkeletonWide {
+  height: 24px;
+  border-radius: var(--radius-full);
+}
+
+.recentPillSkeleton {
+  width: 74px;
+}
+
+.recentPillSkeletonWide {
+  width: 118px;
+}
+
 @media (max-width: 640px) {
   .welcome {
     flex-direction: column;
