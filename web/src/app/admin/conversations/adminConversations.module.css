@@ -1,0 +1,123 @@
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.formRow {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.fieldGrow {
+  flex: 1;
+  min-width: 220px;
+}
+
+.roleField {
+  width: 160px;
+}
+
+.sortField {
+  width: 120px;
+}
+
+.publishField {
+  justify-content: flex-end;
+  min-height: 42px;
+}
+
+.publishField label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-block: 10px;
+}
+
+.publishField input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--primary);
+}
+
+.dialogueHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.dialogueLine {
+  display: grid;
+  grid-template-columns: 76px minmax(220px, 2fr) minmax(180px, 1fr) 32px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.dialogueHint {
+  padding: 14px;
+  color: var(--text-tertiary);
+  font-size: 13px;
+  text-align: center;
+  background: var(--bg-secondary);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+
+.formActions {
+  display: flex;
+  gap: 8px;
+}
+
+@media (max-width: 760px) {
+  .formRow {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .fieldGrow,
+  .roleField,
+  .sortField {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .publishField {
+    min-height: 0;
+  }
+
+  .dialogueLine {
+    grid-template-columns: 70px minmax(0, 1fr) 32px;
+  }
+
+  .dialogueLine input:nth-of-type(2) {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .formActions {
+    flex-direction: column;
+  }
+
+  .formActions :global(.btn) {
+    width: 100%;
+  }
+}
+
+@media (max-width: 420px) {
+  .dialogueHeader {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

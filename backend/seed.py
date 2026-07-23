@@ -1,85 +1,91 @@
 import asyncio
+
 from sqlalchemy import select
+
 from app.database import async_session_maker
-from app.models import Topic, Level, Conversation, ConversationLine, Speaker
+from app.models import Conversation, ConversationLine, Level, Speaker, Topic
+
+
+SAMPLE_LINES = [
+    ("A", "Hi! Welcome to Daily Brew. What can I get for you today?", "Be welcoming and cheerful."),
+    ("B", "I'd like a medium latte with oat milk, please.", "Focus on 'medium' and 'oat milk'."),
+    ("A", "Great choice! Would you like that hot or iced?", "Slightly raise pitch at the end."),
+    ("B", "Iced, please.", "Clear 's' sound in 'Iced'."),
+    ("A", "That will be $4.50. You can pay at the next window.", ""),
+]
+
 
 async def seed():
+    """Idempotently create or refresh the small sample curriculum."""
+
     async with async_session_maker() as session:
-        # Check if topic exists
-        result = await session.execute(select(Topic).filter_by(title="Daily Conversations"))
-        topic = result.scalar_one_or_none()
-        
-        if not topic:
-            topic = Topic(
-                title="Daily Conversations",
-                description="Common everyday situations to get you started.",
-                icon="☕",
-                level="beginner",
-                sort_order=1,
-                is_published=True
+        topic = (
+            await session.execute(
+                select(Topic)
+                .where(Topic.title == "Daily Conversations")
+                .order_by(Topic.created_at)
             )
+        ).scalars().first()
+        if topic is None:
+            topic = Topic(title="Daily Conversations")
             session.add(topic)
-            await session.flush()
-        
-            # Create conversation
+        topic.description = "Common everyday situations to get you started."
+        topic.icon = "☕"
+        topic.level = Level.BEGINNER
+        topic.sort_order = 1
+        topic.is_published = True
+        await session.flush()
+
+        conversation = (
+            await session.execute(
+                select(Conversation)
+                .where(
+                    Conversation.topic_id == topic.id,
+                    Conversation.title == "Ordering Coffee",
+                )
+                .order_by(Conversation.created_at)
+            )
+        ).scalars().first()
+        if conversation is None:
             conversation = Conversation(
                 topic_id=topic.id,
                 title="Ordering Coffee",
-                description="Practice ordering your favorite coffee drink.",
-                situation="At a busy local coffee shop.",
-                role_a_name="Barista",
-                role_b_name="Customer",
-                level="beginner",
-                sort_order=1,
-                is_published=True
             )
             session.add(conversation)
-            await session.flush()
+        conversation.description = "Practice ordering your favorite coffee drink."
+        conversation.situation = "At a busy local coffee shop."
+        conversation.role_a_name = "Barista"
+        conversation.role_b_name = "Customer"
+        conversation.level = Level.BEGINNER
+        conversation.sort_order = 1
+        conversation.is_published = True
+        await session.flush()
 
-            # Create lines
-            lines = [
-                ConversationLine(
-                    conversation_id=conversation.id,
-                    speaker="A",
-                    line_order=1,
-                    text_en="Hi! Welcome to Daily Brew. What can I get for you today?",
-                    pronunciation_hint="Be welcoming and cheerful.",
-                ),
-                ConversationLine(
-                    conversation_id=conversation.id,
-                    speaker="B",
-                    line_order=2,
-                    text_en="I'd like a medium latte with oat milk, please.",
-                    pronunciation_hint="Focus on 'medium' and 'oat milk'.",
-                ),
-                ConversationLine(
-                    conversation_id=conversation.id,
-                    speaker="A",
-                    line_order=3,
-                    text_en="Great choice! Would you like that hot or iced?",
-                    pronunciation_hint="Slightly raise pitch at the end.",
-                ),
-                ConversationLine(
-                    conversation_id=conversation.id,
-                    speaker="B",
-                    line_order=4,
-                    text_en="Iced, please.",
-                    pronunciation_hint="Clear 's' sound in 'Iced'.",
-                ),
-                ConversationLine(
-                    conversation_id=conversation.id,
-                    speaker="A",
-                    line_order=5,
-                    text_en="That will be $4.50. You can pay at the next window.",
-                    pronunciation_hint="",
+        existing_lines = {
+            line.line_order: line
+            for line in (
+                await session.execute(
+                    select(ConversationLine).where(
+                        ConversationLine.conversation_id == conversation.id
+                    )
                 )
-            ]
-            session.add_all(lines)
-            
-            await session.commit()
-            print("Database seeded with sample Topic and Conversation.")
-        else:
-            print("Database appears to be seeded already.")
+            ).scalars()
+        }
+        for line_order, (speaker, text, hint) in enumerate(SAMPLE_LINES, start=1):
+            line = existing_lines.get(line_order)
+            if line is None:
+                line = ConversationLine(
+                    conversation_id=conversation.id,
+                    line_order=line_order,
+                )
+                session.add(line)
+            line.speaker = Speaker(speaker)
+            line.text_en = text
+            line.pronunciation_hint = hint
+
+        await session.commit()
+        print("Sample curriculum upserted successfully.")
+
 
 if __name__ == "__main__":
     asyncio.run(seed())

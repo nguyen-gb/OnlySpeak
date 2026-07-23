@@ -459,6 +459,30 @@
     align-items: flex-start;
   }
 
+  .welcome > :global(.btn) {
+    width: 100%;
+  }
+
+  .userStatusRow,
+  .reviewMeta {
+    flex-wrap: wrap;
+  }
+
+  .reviewSection,
+  .masteryOverview {
+    padding: 20px;
+  }
+
+  .reviewCard {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .reviewCard > :global(.btn) {
+    width: 100%;
+  }
+
   .statsGrid {
     grid-template-columns: 1fr 1fr;
   }
@@ -476,5 +500,25 @@
   .recentItem {
     flex-direction: column;
     align-items: flex-start;
+  }
+}
+
+@media (max-width: 420px) {
+  .statsGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .userStatusRow {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .streakBadge,
+  .levelBadge {
+    justify-content: center;
+  }
+
+  .emptyCard {
+    padding: 36px 20px;
   }
 }

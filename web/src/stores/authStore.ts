@@ -1,11 +1,17 @@
 import { create } from "zustand";
-import { api } from "@/lib/api";
+import {
+  api,
+  getErrorMessage,
+  isTransientApiError,
+} from "@/lib/api";
+import { getQueryClient } from "@/lib/queryClient";
+import { broadcastAuthEvent } from "@/lib/authSync";
 
-interface User {
+export interface User {
   id: string;
   email: string;
   full_name: string;
-  avatar_url?: string;
+  avatar_url?: string | null;
   role: string;
   provider: string;
   is_active: boolean;
@@ -18,52 +24,135 @@ interface User {
 interface AuthState {
   user: User | null;
   isLoading: boolean;
+  isInitialized: boolean;
   isAuthenticated: boolean;
-
+  sessionError: string | null;
   googleLogin: (token: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
   loadUser: () => Promise<void>;
+  clearSession: (notifyOtherTabs?: boolean) => void;
   setUser: (user: User) => void;
 }
 
-interface TokenResponse {
-  access_token: string;
-  refresh_token: string;
+interface LoginResponse {
+  token_type: string;
   user: User;
 }
 
-export const useAuthStore = create<AuthState>((set) => ({
+let loadUserPromise: Promise<void> | null = null;
+let loadUserAgain = false;
+
+export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   isLoading: true,
+  isInitialized: false,
   isAuthenticated: false,
+  sessionError: null,
 
   googleLogin: async (token) => {
-    const res = await api.post("/api/auth/google", { token });
-    const data = res.data as TokenResponse;
-    localStorage.setItem("access_token", data.access_token);
-    localStorage.setItem("refresh_token", data.refresh_token);
-    set({ user: data.user, isAuthenticated: true });
-  },
-
-  logout: () => {
-    localStorage.removeItem("access_token");
-    localStorage.removeItem("refresh_token");
-    set({ user: null, isAuthenticated: false });
-    window.location.href = "/login";
-  },
-
-  loadUser: async () => {
+    set({ isLoading: true });
     try {
-      const token = localStorage.getItem("access_token");
-      if (!token) {
-        set({ isLoading: false });
-        return;
+      const response = await api.post<LoginResponse>("/api/auth/google", {
+        token,
+      });
+      getQueryClient().clear();
+      set({
+        user: response.data.user,
+        isAuthenticated: true,
+        isInitialized: true,
+        isLoading: false,
+        sessionError: null,
+      });
+      broadcastAuthEvent("identity-changed");
+    } catch (error) {
+      set({ isLoading: false, isInitialized: true });
+      throw error;
+    }
+  },
+
+  logout: async () => {
+    await api.post("/api/auth/logout");
+    getQueryClient().clear();
+    set({
+      user: null,
+      isAuthenticated: false,
+      isInitialized: true,
+      isLoading: false,
+      sessionError: null,
+    });
+    broadcastAuthEvent("logged-out");
+    if (typeof window !== "undefined") {
+      window.location.replace("/login");
+    }
+  },
+
+  loadUser: () => {
+    if (loadUserPromise) {
+      loadUserAgain = true;
+      return loadUserPromise;
+    }
+    loadUserPromise = (async () => {
+      if (!get().isInitialized) {
+        set({ isLoading: true, sessionError: null });
+      } else {
+        set({ sessionError: null });
       }
-      const res = await api.get("/api/auth/me");
-      const user = res.data as User;
-      set({ user, isAuthenticated: true, isLoading: false });
-    } catch {
-      set({ user: null, isAuthenticated: false, isLoading: false });
+      try {
+        const response = await api.get<User>("/api/auth/me");
+        const previousUser = get().user;
+        if (
+          previousUser &&
+          (previousUser.id !== response.data.id ||
+            previousUser.role !== response.data.role)
+        ) {
+          getQueryClient().clear();
+        }
+        set({
+          user: response.data,
+          isAuthenticated: true,
+          isInitialized: true,
+          isLoading: false,
+          sessionError: null,
+        });
+      } catch (error) {
+        if (isTransientApiError(error)) {
+          set({
+            isInitialized: true,
+            isLoading: false,
+            sessionError: getErrorMessage(error),
+          });
+          return;
+        }
+        getQueryClient().clear();
+        set({
+          user: null,
+          isAuthenticated: false,
+          isInitialized: true,
+          isLoading: false,
+          sessionError: null,
+        });
+      } finally {
+        loadUserPromise = null;
+        if (loadUserAgain) {
+          loadUserAgain = false;
+          void get().loadUser();
+        }
+      }
+    })();
+    return loadUserPromise;
+  },
+
+  clearSession: (notifyOtherTabs = true) => {
+    getQueryClient().clear();
+    set({
+      user: null,
+      isAuthenticated: false,
+      isInitialized: true,
+      isLoading: false,
+      sessionError: null,
+    });
+    if (notifyOtherTabs) {
+      broadcastAuthEvent("session-expired");
     }
   },
 

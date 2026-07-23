@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "test": "tsc --target ES2020 --module commonjs --moduleResolution node --esModuleInterop --skipLibCheck --outDir .test-dist src/lib/api.ts src/lib/api.test.ts src/lib/speechScoring.ts src/lib/speechScoring.test.ts && node .test-dist/api.test.js && node .test-dist/speechScoring.test.js"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.100.14",

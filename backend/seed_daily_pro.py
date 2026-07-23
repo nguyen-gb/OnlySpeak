@@ -1,16 +1,33 @@
+import argparse
 import asyncio
+import os
 from sqlalchemy import select, delete
 from app.database import async_session_maker
-from app.models import Topic, Level, Conversation, ConversationLine, Speaker, UserProgress
+from app.models import (
+    Conversation,
+    ConversationLine,
+    Level,
+    PracticeAttempt,
+    Speaker,
+    Topic,
+    UserProgress,
+)
 
-async def seed():
+async def seed(*, reset: bool = False):
     async with async_session_maker() as session:
-        print("Cleaning up existing database records to avoid duplicates...")
-        await session.execute(delete(UserProgress))
-        await session.execute(delete(ConversationLine))
-        await session.execute(delete(Conversation))
-        await session.execute(delete(Topic))
-        await session.flush()
+        if reset:
+            if os.getenv("ONLYSPEAK_ALLOW_DESTRUCTIVE_SEED") != "yes-delete-data":
+                raise RuntimeError(
+                    "Refusing destructive seed. Set "
+                    "ONLYSPEAK_ALLOW_DESTRUCTIVE_SEED=yes-delete-data and pass --reset."
+                )
+            print("Reset explicitly authorized; deleting curriculum and progress...")
+            await session.execute(delete(PracticeAttempt))
+            await session.execute(delete(UserProgress))
+            await session.execute(delete(ConversationLine))
+            await session.execute(delete(Conversation))
+            await session.execute(delete(Topic))
+            await session.flush()
 
         # Define 18 Topics & 90 Conversations (5 conversations per topic)
         curriculum = [
@@ -1432,48 +1449,85 @@ async def seed():
             }
         ]
 
-        # Insert records into DB
-        print("Inserting topics, conversations, and lines...")
+        # Idempotent upsert by the curriculum's stable topic/conversation titles.
+        print("Upserting topics, conversations, and lines...")
         for topic_index, topic_data in enumerate(curriculum):
-            topic = Topic(
-                title=topic_data["topic"]["title"],
-                description=topic_data["topic"]["description"],
-                icon=topic_data["topic"]["icon"],
-                level=topic_data["topic"]["level"],
-                sort_order=topic_index + 1,
-                is_published=topic_data["topic"]["is_published"]
-            )
-            session.add(topic)
+            topic_values = topic_data["topic"]
+            topic = (
+                await session.execute(
+                    select(Topic)
+                    .where(Topic.title == topic_values["title"])
+                    .order_by(Topic.created_at)
+                )
+            ).scalars().first()
+            if topic is None:
+                topic = Topic(title=topic_values["title"])
+                session.add(topic)
+            topic.description = topic_values["description"]
+            topic.icon = topic_values["icon"]
+            topic.level = topic_values["level"]
+            topic.sort_order = topic_index + 1
+            topic.is_published = topic_values["is_published"]
             await session.flush()
 
             for conv_index, conv_data in enumerate(topic_data["conversations"]):
-                conversation = Conversation(
-                    topic_id=topic.id,
-                    title=conv_data["title"],
-                    description=conv_data["description"],
-                    situation=conv_data["situation"],
-                    role_a_name=conv_data["role_a_name"],
-                    role_b_name=conv_data["role_b_name"],
-                    level=conv_data["level"],
-                    sort_order=conv_index + 1,
-                    is_published=conv_data["is_published"]
-                )
-                session.add(conversation)
+                conversation = (
+                    await session.execute(
+                        select(Conversation)
+                        .where(
+                            Conversation.topic_id == topic.id,
+                            Conversation.title == conv_data["title"],
+                        )
+                        .order_by(Conversation.created_at)
+                    )
+                ).scalars().first()
+                if conversation is None:
+                    conversation = Conversation(
+                        topic_id=topic.id,
+                        title=conv_data["title"],
+                    )
+                    session.add(conversation)
+                conversation.description = conv_data["description"]
+                conversation.situation = conv_data["situation"]
+                conversation.role_a_name = conv_data["role_a_name"]
+                conversation.role_b_name = conv_data["role_b_name"]
+                conversation.level = conv_data["level"]
+                conversation.sort_order = conv_index + 1
+                conversation.is_published = conv_data["is_published"]
                 await session.flush()
 
+                existing_lines = {
+                    line.line_order: line
+                    for line in (
+                        await session.execute(
+                            select(ConversationLine).where(
+                                ConversationLine.conversation_id == conversation.id
+                            )
+                        )
+                    ).scalars()
+                }
                 for line_index, (speaker, text_en, hint) in enumerate(conv_data["lines"]):
-                    line = ConversationLine(
-                        conversation_id=conversation.id,
-                        speaker=Speaker(speaker),
-                        line_order=line_index + 1,
-                        text_en=text_en,
-                        pronunciation_hint=hint,
-                        audio_url=None
-                    )
-                    session.add(line)
+                    line_order = line_index + 1
+                    line = existing_lines.get(line_order)
+                    if line is None:
+                        line = ConversationLine(
+                            conversation_id=conversation.id,
+                            line_order=line_order,
+                        )
+                        session.add(line)
+                    line.speaker = Speaker(speaker)
+                    line.text_en = text_en
+                    line.pronunciation_hint = hint
         
         await session.commit()
-        print("Database successfully seeded with 18 Topics and 90 detailed Conversations!")
+        print("Database successfully upserted with 18 Topics and 90 Conversations.")
 
 if __name__ == "__main__":
-    asyncio.run(seed())
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="Delete existing curriculum and progress before seeding (requires guard env var).",
+    )
+    args = parser.parse_args()
+    asyncio.run(seed(reset=args.reset))

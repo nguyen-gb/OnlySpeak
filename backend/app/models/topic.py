@@ -1,10 +1,19 @@
-import uuid
 import enum
+import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import String, Boolean, Integer, DateTime, Text, Enum as SAEnum
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Enum as SAEnum,
+    Index,
+    Integer,
+    String,
+    Text,
+)
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 
@@ -17,6 +26,10 @@ class Level(str, enum.Enum):
 
 class Topic(Base):
     __tablename__ = "topics"
+    __table_args__ = (
+        CheckConstraint("sort_order >= 0", name="ck_topic_sort_order_nonnegative"),
+        Index("ix_topic_published_sort", "is_published", "sort_order"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -36,5 +49,9 @@ class Topic(Base):
     )
 
     conversations = relationship(
-        "Conversation", back_populates="topic", lazy="selectin"
+        "Conversation",
+        back_populates="topic",
+        lazy="raise",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )

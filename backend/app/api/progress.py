@@ -1,43 +1,56 @@
-from datetime import datetime, timezone, timedelta
+import math
+from datetime import datetime, timedelta, timezone
+from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.database import get_db
 from app.api.deps import get_current_user
+from app.database import get_db
+from app.models.conversation import Conversation, ConversationLine, Speaker
+from app.models.progress import PracticeAttempt, UserProgress
+from app.models.topic import Topic
 from app.models.user import User
-from app.models.progress import UserProgress
-from app.models.conversation import Conversation
-from app.schemas.progress import ProgressCreate, ProgressResponse, ProgressStatsResponse
+from app.schemas.progress import (
+    PracticeAttemptResponse,
+    ProgressCreate,
+    ProgressResponse,
+    ProgressSaveResponse,
+    ProgressStatsResponse,
+)
 
 router = APIRouter(prefix="/api/progress", tags=["progress"])
 
-# ── Mastery & Mode Constants ──
 MASTERY_THRESHOLD = 90
 MASTERY_STREAK_REQUIRED = 5
 MAX_HISTORY = 20
+MAX_RESPONSE_HISTORY = 50
+MAX_FREE_TALK_TURNS = 20
 
 # A mode unlocks the next mode only after enough completed sessions pass its
 # own rule. Best score alone is display progress, not unlock state.
 MODE_UNLOCK_RULES = {
-    1: {"score": 90, "successes": 3},  # Shadow Master
-    2: {"score": 90, "successes": 3},  # Reader
-    3: {"score": 90, "successes": 3},  # Listener
-    4: {"score": 90, "successes": 5, "response_time": 3.0},  # Speed Talker
-    5: {"score": 90, "successes": 2},  # Fluent
+    1: {"score": 90, "successes": 3},
+    2: {"score": 90, "successes": 3},
+    3: {"score": 90, "successes": 3},
+    4: {"score": 90, "successes": 5, "response_time": 3.0},
+    5: {"score": 90, "successes": 2},
 }
-ROLE_SUCCESS_CAP_BY_MODE = {
-    1: 2,
-    2: 2,
-    3: 2,
-    4: 3,
-    5: 1,
-}
+ROLE_SUCCESS_CAP_BY_MODE = {1: 2, 2: 2, 3: 2, 4: 3, 5: 1}
 
 
-def _role_key(role: str | None) -> str | None:
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _role_key(role: str | Speaker | None) -> str | None:
     if not role:
         return None
     value = getattr(role, "value", role)
@@ -45,31 +58,46 @@ def _role_key(role: str | None) -> str | None:
     return value if value in {"A", "B"} else None
 
 
-def _calculate_srs(score: float, interval: float, ease_factor: float) -> tuple[float, float]:
-    if score >= 95: q = 5
-    elif score >= 85: q = 4
-    elif score >= 70: q = 3
-    elif score >= 50: q = 2
-    elif score >= 30: q = 1
-    else: q = 0
+def _calculate_srs(
+    score: float,
+    interval: float,
+    ease_factor: float,
+    repetitions: int = 0,
+) -> tuple[float, float, int]:
+    """Apply the SM-2 interval/ease rules to one completed recall."""
 
-    if q >= 3:
-        if interval <= 0:
-            new_interval = 1
-        elif interval == 1:
-            new_interval = 6
-        else:
-            new_interval = round(interval * ease_factor)
-        
-        new_ease_factor = ease_factor + (0.1 - (5 - q) * (0.08 + (5 - q) * 0.02))
+    if score >= 95:
+        quality = 5
+    elif score >= 85:
+        quality = 4
+    elif score >= 70:
+        quality = 3
+    elif score >= 50:
+        quality = 2
+    elif score >= 30:
+        quality = 1
     else:
-        new_interval = 1
-        new_ease_factor = ease_factor
+        quality = 0
 
-    if new_ease_factor < 1.3:
-        new_ease_factor = 1.3
-        
-    return float(new_interval), float(new_ease_factor)
+    current_ease = max(float(ease_factor or 2.5), 1.3)
+    new_ease = max(
+        1.3,
+        current_ease
+        + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02)),
+    )
+
+    if quality < 3:
+        return 1.0, round(new_ease, 3), 0
+
+    new_repetitions = max(int(repetitions or 0), 0) + 1
+    if new_repetitions == 1:
+        new_interval = 1
+    elif new_repetitions == 2:
+        new_interval = 6
+    else:
+        new_interval = max(1, round(max(interval, 1) * current_ease))
+
+    return float(min(new_interval, 3650)), round(new_ease, 3), new_repetitions
 
 
 def _calculate_mastery(
@@ -78,25 +106,22 @@ def _calculate_mastery(
     streak_perfect: int,
     scores_history: list[float],
 ) -> float:
-    if not scores_history or practice_count == 0:
+    if not scores_history or practice_count <= 0:
         return 0.0
 
     streak_factor = min(streak_perfect / MASTERY_STREAK_REQUIRED, 1.0) * 40
-    recent = scores_history[-5:] if len(scores_history) >= 5 else scores_history
-    recent_avg = sum(recent) / len(recent)
-    recent_factor = (recent_avg / 100) * 30
+    recent = scores_history[-5:]
+    recent_factor = (sum(recent) / len(recent) / 100) * 30
     best_factor = (best_score / 100) * 15
-    
-    import math
-    volume_factor = min(math.log2(practice_count + 1) / math.log2(11), 1.0) * 15
-
-    mastery = streak_factor + recent_factor + best_factor + volume_factor
-    return round(min(mastery, 100.0), 1)
+    volume_factor = min(
+        math.log2(practice_count + 1) / math.log2(11), 1.0
+    ) * 15
+    return round(min(streak_factor + recent_factor + best_factor + volume_factor, 100), 1)
 
 
 def _empty_mode_data() -> dict:
     return {
-        "best": 0,
+        "best": 0.0,
         "streak": 0,
         "success_count": 0,
         "total_success_count": 0,
@@ -107,393 +132,741 @@ def _empty_mode_data() -> dict:
     }
 
 
+def _safe_nonnegative_int(value) -> int:
+    try:
+        return max(int(value or 0), 0)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def _safe_score(value) -> float:
+    try:
+        score = float(value or 0)
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+    return min(max(score, 0.0), 100.0) if math.isfinite(score) else 0.0
+
+
 def _effective_success_count(data: dict, mode: int) -> int:
     required = MODE_UNLOCK_RULES.get(mode, {}).get("successes")
     role_counts = data.get("role_success_counts") or {}
     role_cap = ROLE_SUCCESS_CAP_BY_MODE.get(mode)
-    if role_cap and role_counts:
+    if role_cap:
         count = sum(
-            min(int(role_counts.get(role) or 0), role_cap)
+            min(_safe_nonnegative_int(role_counts.get(role)), role_cap)
             for role in ("A", "B")
         )
     else:
-        count = int(data.get("total_success_count") or data.get("success_count") or 0)
+        count = _safe_nonnegative_int(
+            data.get("total_success_count") or data.get("success_count")
+        )
     return min(count, int(required)) if required else count
 
 
-def _normalize_mode_data(raw: dict | None, mode: int, role_played: str | None = None) -> dict:
+def _normalize_mode_data(
+    raw: dict | None,
+    mode: int,
+    role_played: str | Speaker | None = None,
+) -> dict:
     data = _empty_mode_data()
-    if raw:
+    if isinstance(raw, dict):
         data.update(raw)
 
-    data["best"] = float(data.get("best") or 0)
-    data["streak"] = int(data.get("streak") or 0)
-    legacy_success_count = int(data.get("success_count") or 0)
-
-    raw_role_counts = data.get("role_success_counts") or {}
+    data["best"] = _safe_score(data.get("best"))
+    data["streak"] = _safe_nonnegative_int(data.get("streak"))
+    legacy_success_count = _safe_nonnegative_int(data.get("success_count"))
+    raw_role_counts = data.get("role_success_counts")
+    raw_role_counts = raw_role_counts if isinstance(raw_role_counts, dict) else {}
     role_counts = {
-        "A": int(raw_role_counts.get("A") or 0),
-        "B": int(raw_role_counts.get("B") or 0),
+        "A": _safe_nonnegative_int(raw_role_counts.get("A")),
+        "B": _safe_nonnegative_int(raw_role_counts.get("B")),
     }
 
-    # Older records only stored one aggregate success_count on each role-specific
-    # progress row. Attribute that legacy count to the row's role so the new
-    # cross-role unlock rule can still evaluate historical progress.
     role_key = _role_key(role_played)
     if role_key and not any(role_counts.values()) and legacy_success_count:
         role_counts[role_key] = legacy_success_count
 
     data["role_success_counts"] = role_counts
     data["total_success_count"] = max(
-        int(data.get("total_success_count") or 0),
+        _safe_nonnegative_int(data.get("total_success_count")),
         legacy_success_count,
         sum(role_counts.values()),
     )
     data["success_count"] = _effective_success_count(data, mode)
-
     required = MODE_UNLOCK_RULES.get(mode, {}).get("successes", 1)
     data["passed"] = data["success_count"] >= required
+    data["passed_at"] = data.get("passed_at") or None
+    data["last_success_at"] = data.get("last_success_at") or None
     return data
 
 
 def _session_passed_mode(mode: int, score: float, session_avg_rt: float) -> bool:
     rule = MODE_UNLOCK_RULES.get(mode)
-    if not rule:
+    if not rule or score < rule["score"]:
         return False
-
-    if score < rule["score"]:
-        return False
-
     response_time = rule.get("response_time")
     if response_time is not None:
-        return session_avg_rt > 0 and session_avg_rt < response_time
-
+        return 0 < session_avg_rt < response_time
     return True
 
 
 def _calculate_current_mode(mode_scores: dict, *, now: datetime | None = None) -> int:
-    now = now or datetime.now(timezone.utc)
+    del now  # Kept as a keyword for compatibility with existing internal callers.
     unlocked = 1
-
     for mode in (1, 2, 3):
-        mode_data = _normalize_mode_data(mode_scores.get(str(mode)), mode)
-        if not mode_data["passed"]:
+        if not _normalize_mode_data(mode_scores.get(str(mode)), mode)["passed"]:
             return unlocked
         unlocked = mode + 1
-
-    mode4 = _normalize_mode_data(mode_scores.get("4"), 4)
-    if not mode4["passed"]:
+    if not _normalize_mode_data(mode_scores.get("4"), 4)["passed"]:
         return unlocked
-
     return 5
 
 
-def _merge_mode_scores(base: dict, incoming: dict, role_played: str | None = None) -> dict:
-    merged = dict(base)
-    for mode_key, raw_data in (incoming or {}).items():
+def _merge_mode_scores(
+    base: dict,
+    incoming: dict,
+    role_played: str | Speaker | None = None,
+) -> dict:
+    merged = dict(base or {})
+    for raw_mode_key, raw_data in (incoming or {}).items():
         try:
-            mode = int(mode_key)
+            mode = int(raw_mode_key)
         except (TypeError, ValueError):
             continue
+        if mode not in MODE_UNLOCK_RULES:
+            continue
 
+        mode_key = str(mode)
         current = _normalize_mode_data(merged.get(mode_key), mode)
         new = _normalize_mode_data(raw_data, mode, role_played)
         current["best"] = max(current["best"], new["best"])
         current["streak"] = max(current["streak"], new["streak"])
-        current["total_success_count"] = int(current.get("total_success_count") or 0) + int(new.get("total_success_count") or 0)
-        current_role_counts = current.get("role_success_counts") or {}
-        new_role_counts = new.get("role_success_counts") or {}
+        current["total_success_count"] = (
+            _safe_nonnegative_int(current.get("total_success_count"))
+            + _safe_nonnegative_int(new.get("total_success_count"))
+        )
+        current_counts = current.get("role_success_counts") or {}
+        new_counts = new.get("role_success_counts") or {}
         current["role_success_counts"] = {
-            role: int(current_role_counts.get(role) or 0) + int(new_role_counts.get(role) or 0)
+            role: _safe_nonnegative_int(current_counts.get(role))
+            + _safe_nonnegative_int(new_counts.get(role))
             for role in ("A", "B")
         }
         current["success_count"] = _effective_success_count(current, mode)
-        current["passed"] = current["success_count"] >= MODE_UNLOCK_RULES.get(mode, {}).get("successes", 1)
+        current["passed"] = (
+            current["success_count"]
+            >= MODE_UNLOCK_RULES.get(mode, {}).get("successes", 1)
+        )
 
         current_last = current.get("last_success_at")
         new_last = new.get("last_success_at")
         if new_last and (not current_last or new_last > current_last):
             current["last_success_at"] = new_last
-
         current_passed_at = current.get("passed_at")
         new_passed_at = new.get("passed_at")
-        if new_passed_at and (not current_passed_at or new_passed_at < current_passed_at):
+        if new_passed_at and (
+            not current_passed_at or new_passed_at < current_passed_at
+        ):
             current["passed_at"] = new_passed_at
-
         merged[mode_key] = current
     return merged
 
 
-def _to_response(p: UserProgress, conversation: Conversation | None = None) -> ProgressResponse:
+def _to_response(
+    progress: UserProgress,
+    conversation: Conversation | None = None,
+) -> ProgressResponse:
     mode_scores = {}
-    for mode_key, mode_data in (p.mode_scores or {}).items():
+    for mode_key, mode_data in (progress.mode_scores or {}).items():
         try:
-            mode_scores[mode_key] = _normalize_mode_data(mode_data, int(mode_key), p.role_played.value)
+            mode_scores[str(int(mode_key))] = _normalize_mode_data(
+                mode_data,
+                int(mode_key),
+                progress.role_played,
+            )
         except (TypeError, ValueError):
             continue
 
     return ProgressResponse(
-        id=p.id,
-        user_id=p.user_id,
-        conversation_id=p.conversation_id,
+        id=progress.id,
+        user_id=progress.user_id,
+        conversation_id=progress.conversation_id,
         conversation_title=conversation.title if conversation else "",
-        conversation_situation=conversation.situation if conversation else "",
-        role_played=p.role_played.value,
-        completed_lines=p.completed_lines,
-        total_lines=p.total_lines,
-        is_completed=p.is_completed,
-        pronunciation_score=p.pronunciation_score,
-        practice_count=p.practice_count,
-        best_score=p.best_score,
-        streak_perfect=p.streak_perfect,
-        mastery_level=p.mastery_level,
-        scores_history=p.scores_history or [],
-        current_mode=_calculate_current_mode(mode_scores),
+        conversation_situation=(conversation.situation or "") if conversation else "",
+        role_played=progress.role_played.value,
+        completed_lines=progress.completed_lines,
+        total_lines=progress.total_lines,
+        is_completed=progress.is_completed,
+        pronunciation_score=progress.pronunciation_score,
+        practice_count=progress.practice_count,
+        best_score=progress.best_score,
+        streak_perfect=progress.streak_perfect,
+        mastery_level=progress.mastery_level,
+        scores_history=list(progress.scores_history or []),
+        current_mode=max(progress.current_mode, _calculate_current_mode(mode_scores)),
         mode_scores=mode_scores,
-        avg_response_time=p.avg_response_time,
-        next_review_at=p.next_review_at,
-        review_interval=p.review_interval,
-        last_practiced_at=p.last_practiced_at,
-        created_at=p.created_at,
+        avg_response_time=progress.avg_response_time,
+        next_review_at=_as_utc(progress.next_review_at),
+        review_interval=progress.review_interval,
+        last_practiced_at=_as_utc(progress.last_practiced_at),
+        created_at=_as_utc(progress.created_at),
     )
 
 
-def _to_grouped_response(items: list[UserProgress], conversation: Conversation | None = None) -> ProgressResponse:
-    ordered = sorted(items, key=lambda item: item.last_practiced_at, reverse=True)
+def _to_grouped_response(
+    items: list[UserProgress],
+    conversation: Conversation | None = None,
+) -> ProgressResponse:
+    if not items:
+        raise ValueError("at least one progress aggregate is required")
+    ordered = sorted(
+        items,
+        key=lambda item: _as_utc(item.last_practiced_at),
+        reverse=True,
+    )
     latest = ordered[0]
     response = _to_response(latest, conversation)
-
-    roles = sorted({_role_key(p.role_played.value) or p.role_played.value for p in ordered})
+    roles = sorted({_role_key(item.role_played) for item in ordered if _role_key(item.role_played)})
     merged_scores: dict = {}
     scores_history: list[float] = []
     response_times: list[float] = []
-    for progress in ordered:
+    for progress in sorted(ordered, key=lambda item: _as_utc(item.last_practiced_at)):
         merged_scores = _merge_mode_scores(
             merged_scores,
             progress.mode_scores or {},
-            progress.role_played.value,
+            progress.role_played,
         )
         scores_history.extend(progress.scores_history or [])
         response_times.extend(progress.response_times or [])
 
-    scores = [p.pronunciation_score for p in ordered if p.pronunciation_score is not None]
+    scores = [
+        item.pronunciation_score
+        for item in ordered
+        if item.pronunciation_score is not None
+    ]
     response.role_played = "/".join(roles)
-    response.completed_lines = sum(p.completed_lines for p in ordered)
-    response.total_lines = sum(p.total_lines for p in ordered)
-    response.is_completed = all(p.is_completed for p in ordered)
-    response.pronunciation_score = round(sum(scores) / len(scores), 1) if scores else None
-    response.practice_count = sum(p.practice_count for p in ordered)
-    response.best_score = max((p.best_score for p in ordered), default=0)
-    response.streak_perfect = max((p.streak_perfect for p in ordered), default=0)
-    response.mastery_level = max((p.mastery_level for p in ordered), default=0)
+    response.completed_lines = sum(item.completed_lines for item in ordered)
+    response.total_lines = sum(item.total_lines for item in ordered)
+    response.is_completed = any(item.is_completed for item in ordered)
+    response.pronunciation_score = (
+        round(sum(scores) / len(scores), 1) if scores else None
+    )
+    response.practice_count = sum(item.practice_count for item in ordered)
+    response.best_score = max((item.best_score for item in ordered), default=0)
+    response.streak_perfect = max(
+        (item.streak_perfect for item in ordered), default=0
+    )
+    response.mastery_level = max(
+        (item.mastery_level for item in ordered), default=0
+    )
     response.scores_history = scores_history[-MAX_HISTORY:]
     response.current_mode = _calculate_current_mode(merged_scores)
     response.mode_scores = merged_scores
-    response.avg_response_time = round(sum(response_times) / len(response_times), 2) if response_times else 0
-    response.next_review_at = min(
-        (p.next_review_at for p in ordered if p.next_review_at is not None),
-        default=latest.next_review_at,
+    response.avg_response_time = (
+        round(sum(response_times) / len(response_times), 2)
+        if response_times
+        else 0
     )
-    response.last_practiced_at = latest.last_practiced_at
-    response.created_at = min(p.created_at for p in ordered)
+    review_dates = [
+        _as_utc(item.next_review_at)
+        for item in ordered
+        if item.next_review_at is not None
+    ]
+    response.next_review_at = min(review_dates) if review_dates else None
+    response.review_interval = min(
+        (item.review_interval for item in ordered if item.practice_count > 0),
+        default=latest.review_interval,
+    )
+    response.last_practiced_at = _as_utc(latest.last_practiced_at)
+    response.created_at = min(_as_utc(item.created_at) for item in ordered)
     return response
 
 
-@router.post("", response_model=ProgressResponse)
+def _to_attempt_response(
+    attempt: PracticeAttempt,
+    conversation: Conversation,
+) -> PracticeAttemptResponse:
+    return PracticeAttemptResponse(
+        id=attempt.id,
+        attempt_id=attempt.client_attempt_id,
+        user_id=attempt.user_id,
+        conversation_id=attempt.conversation_id,
+        conversation_title=conversation.title,
+        conversation_situation=conversation.situation or "",
+        role_played=attempt.role_played.value,
+        completed_lines=attempt.completed_lines,
+        total_lines=attempt.total_lines,
+        is_completed=attempt.is_completed,
+        pronunciation_score=attempt.pronunciation_score,
+        practice_mode=attempt.practice_mode,
+        response_times=list(attempt.response_times or []),
+        avg_response_time=attempt.avg_response_time,
+        xp_gained=attempt.xp_awarded,
+        practice_count=attempt.session_count,
+        is_legacy=attempt.is_legacy,
+        last_practiced_at=_as_utc(attempt.created_at),
+        created_at=_as_utc(attempt.created_at),
+    )
+
+
+def _attempt_matches(attempt: PracticeAttempt, data: ProgressCreate) -> bool:
+    return (
+        attempt.conversation_id == data.conversation_id
+        and attempt.role_played.value == data.role_played
+        and attempt.completed_lines == data.completed_lines
+        and attempt.total_lines == data.total_lines
+        and attempt.is_completed == data.is_completed
+        and attempt.pronunciation_score == data.pronunciation_score
+        and attempt.practice_mode == data.practice_mode
+        and list(attempt.response_times or []) == list(data.response_times)
+    )
+
+
+async def _practice_context(
+    data: ProgressCreate,
+    db: AsyncSession,
+) -> tuple[Conversation, int]:
+    conversation = (
+        await db.execute(
+            select(Conversation)
+            .join(Topic, Topic.id == Conversation.topic_id)
+            .where(
+                Conversation.id == data.conversation_id,
+                Conversation.is_published.is_(True),
+                Topic.is_published.is_(True),
+            )
+        )
+    ).scalar_one_or_none()
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    counts_result = await db.execute(
+        select(ConversationLine.speaker, func.count(ConversationLine.id))
+        .where(ConversationLine.conversation_id == conversation.id)
+        .group_by(ConversationLine.speaker)
+    )
+    counts = {speaker.value: int(count) for speaker, count in counts_result.all()}
+    if not counts.get("A") or not counts.get("B"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Conversation is not ready for practice",
+        )
+
+    if data.practice_mode < 5:
+        expected_lines = counts[data.role_played]
+        if data.total_lines != expected_lines:
+            raise HTTPException(
+                status_code=422,
+                detail=f"total_lines must equal the server line count ({expected_lines})",
+            )
+        if data.is_completed and data.completed_lines != expected_lines:
+            raise HTTPException(
+                status_code=422,
+                detail="A completed attempt must include every line for the selected role",
+            )
+    else:
+        expected_lines = data.total_lines
+        if data.total_lines > MAX_FREE_TALK_TURNS:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Free Talk is limited to {MAX_FREE_TALK_TURNS} turns",
+            )
+        if data.is_completed and not (1 <= data.completed_lines == data.total_lines):
+            raise HTTPException(
+                status_code=422,
+                detail="A completed Free Talk attempt requires at least one completed turn",
+            )
+
+    if len(data.response_times) > data.completed_lines:
+        raise HTTPException(
+            status_code=422,
+            detail="response_times cannot contain more entries than completed_lines",
+        )
+    if data.is_completed and len(data.response_times) != data.completed_lines:
+        raise HTTPException(
+            status_code=422,
+            detail="A completed attempt requires one response time per completed line",
+        )
+    return conversation, expected_lines
+
+
+def _calculate_xp(mode: int, score: float, completed_lines: int) -> int:
+    xp = 10 + min(completed_lines, 20) * 2
+    if score >= 90:
+        xp += 20
+    if mode == 3:
+        xp += 10
+    elif mode == 4:
+        xp += 20
+    return xp
+
+
+def _update_user_streak(user: User, now: datetime) -> None:
+    last_streak = _as_utc(user.last_streak_date)
+    if last_streak is None:
+        user.streak_count = 1
+        user.last_streak_date = now
+        return
+    days = (now.date() - last_streak.date()).days
+    if days <= 0:
+        return
+    user.streak_count = user.streak_count + 1 if days == 1 else 1
+    user.last_streak_date = now
+
+
+def _effective_streak_count(user: User, now: datetime) -> int:
+    """Return the live streak without mutating it during a read request."""
+
+    last_streak = _as_utc(user.last_streak_date)
+    if last_streak is None:
+        return 0
+    days_since_practice = (now.date() - last_streak.date()).days
+    if days_since_practice > 1:
+        return 0
+    return max(int(user.streak_count or 0), 0)
+
+
+def _save_response(
+    progress_items: list[UserProgress],
+    conversation: Conversation,
+    attempt_id: UUID,
+    *,
+    xp_gained: int,
+    was_duplicate: bool,
+) -> ProgressSaveResponse:
+    aggregate = _to_grouped_response(progress_items, conversation)
+    return ProgressSaveResponse(
+        **aggregate.model_dump(),
+        attempt_id=attempt_id,
+        xp_gained=xp_gained,
+        was_duplicate=was_duplicate,
+    )
+
+
+@router.post("", response_model=ProgressSaveResponse)
 async def save_progress(
     data: ProgressCreate,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    result = await db.execute(
-        select(UserProgress).where(
-            UserProgress.user_id == user.id,
-            UserProgress.conversation_id == data.conversation_id,
-            UserProgress.role_played == data.role_played,
+    # Serialize submissions per user. This closes the first-insert race for the
+    # aggregate and also makes the XP/idempotency check atomic on PostgreSQL.
+    locked_user = (
+        await db.execute(select(User).where(User.id == user.id).with_for_update())
+    ).scalar_one()
+
+    duplicate = (
+        await db.execute(
+            select(PracticeAttempt).where(
+                PracticeAttempt.user_id == locked_user.id,
+                PracticeAttempt.client_attempt_id == data.attempt_id,
+            )
         )
+    ).scalar_one_or_none()
+    if duplicate is not None:
+        if not _attempt_matches(duplicate, data):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="attempt_id was already used with a different payload",
+            )
+        conversation = (
+            await db.execute(
+                select(Conversation).where(Conversation.id == data.conversation_id)
+            )
+        ).scalar_one()
+        progress_items = list(
+            (
+                await db.execute(
+                    select(UserProgress).where(
+                        UserProgress.user_id == locked_user.id,
+                        UserProgress.conversation_id == data.conversation_id,
+                    )
+                )
+            ).scalars()
+        )
+        return _save_response(
+            progress_items,
+            conversation,
+            data.attempt_id,
+            xp_gained=0,
+            was_duplicate=True,
+        )
+
+    conversation, expected_lines = await _practice_context(data, db)
+    progress_items = list(
+        (
+            await db.execute(
+                select(UserProgress)
+                .where(
+                    UserProgress.user_id == locked_user.id,
+                    UserProgress.conversation_id == data.conversation_id,
+                )
+                .with_for_update()
+            )
+        ).scalars()
     )
-    existing = result.scalar_one_or_none()
-    score = data.pronunciation_score or 0.0
-    mode = data.practice_mode or 1
-    new_response_times = data.response_times or []
-    
-    # Calculate average response time for this session
-    session_avg_rt = round(sum(new_response_times) / len(new_response_times), 2) if new_response_times else 0.0
 
-    # XP Calculation (only for completed sessions to prevent farming)
-    xp_gained = 0
-    if data.is_completed:
-        xp_gained = 10 # Base
-        xp_gained += len(new_response_times) * 2
-        if score >= 90: xp_gained += 20
-        if mode == 3: xp_gained += 10
-        if mode == 4: xp_gained += 20
-    
-    # Update User XP and Streak
+    merged_before: dict = {}
+    for item in progress_items:
+        merged_before = _merge_mode_scores(
+            merged_before, item.mode_scores or {}, item.role_played
+        )
+    unlocked_mode = _calculate_current_mode(merged_before)
+    if data.practice_mode > unlocked_mode:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Practice mode {data.practice_mode} is locked; current mode is {unlocked_mode}",
+        )
+
+    role = Speaker(data.role_played)
+    progress = next(
+        (item for item in progress_items if item.role_played == role),
+        None,
+    )
     now = datetime.now(timezone.utc)
-    user.total_xp += xp_gained
-    
-    if user.last_streak_date:
-        last_date = user.last_streak_date.date()
-        today_date = now.date()
-        if today_date > last_date:
-            if (today_date - last_date).days == 1:
-                user.streak_count += 1
-            else:
-                user.streak_count = 1
-            user.last_streak_date = now
-    else:
-        user.streak_count = 1
-        user.last_streak_date = now
+    response_times = [float(value) for value in data.response_times]
+    session_avg_rt = (
+        round(sum(response_times) / len(response_times), 2)
+        if response_times
+        else 0.0
+    )
+    score = float(data.pronunciation_score) if data.pronunciation_score is not None else None
+    xp_gained = (
+        _calculate_xp(data.practice_mode, score, expected_lines)
+        if data.is_completed and score is not None
+        else 0
+    )
 
-    if existing:
-        existing.completed_lines = data.completed_lines
-        existing.total_lines = data.total_lines
-        existing.is_completed = data.is_completed
-        existing.pronunciation_score = score
-        existing.practice_count += 1
-        existing.last_practiced_at = now
-
-        existing.best_score = max(existing.best_score, score)
-        if score >= MASTERY_THRESHOLD:
-            existing.streak_perfect += 1
-        else:
-            existing.streak_perfect = 0
-
-        history = list(existing.scores_history or [])
-        history.append(score)
-        existing.scores_history = history[-MAX_HISTORY:]
-
-        rt_history = list(existing.response_times or [])
-        rt_history.extend(new_response_times)
-        existing.response_times = rt_history[-50:]
-        if existing.response_times:
-            existing.avg_response_time = round(sum(existing.response_times) / len(existing.response_times), 2)
-
-        mode_scores = dict(existing.mode_scores or {})
-        mode_key = str(mode)
-        current_m_data = _normalize_mode_data(mode_scores.get(mode_key), mode, data.role_played)
-        was_passed = current_m_data["passed"]
-        role_key = _role_key(data.role_played)
-
-        current_m_data["best"] = max(current_m_data["best"], score)
-        if data.is_completed:
-            if _session_passed_mode(mode, score, session_avg_rt):
-                current_m_data["streak"] += 1
-                current_m_data["total_success_count"] += 1
-                if role_key:
-                    current_m_data["role_success_counts"][role_key] += 1
-                current_m_data["success_count"] = _effective_success_count(current_m_data, mode)
-                current_m_data["last_success_at"] = now.isoformat()
-            else:
-                # Only reset streak on completed-but-failed, not on incomplete
-                current_m_data["streak"] = 0
-        # If not completed, don't touch streak at all (preserve progress)
-
-        # Recalculate pass status from effective cross-role successes.
-        current_m_data["passed"] = (
-            current_m_data["success_count"]
-            >= MODE_UNLOCK_RULES.get(mode, {}).get("successes", 1)
-        )
-        if current_m_data["passed"] and not was_passed:
-            current_m_data["passed_at"] = now.isoformat()
-        mode_scores[mode_key] = current_m_data
-        existing.mode_scores = mode_scores
-        existing.current_mode = _calculate_current_mode(mode_scores, now=now)
-
-        new_interval, new_ef = _calculate_srs(score, existing.review_interval, existing.ease_factor)
-        existing.review_interval = new_interval
-        existing.ease_factor = new_ef
-        existing.next_review_at = now + timedelta(days=new_interval)
-
-        existing.mastery_level = _calculate_mastery(
-            existing.practice_count, existing.best_score, existing.streak_perfect, history
-        )
-
-        # Explicitly flag JSON columns as modified for SQLite
-        flag_modified(existing, "mode_scores")
-        flag_modified(existing, "scores_history")
-        flag_modified(existing, "response_times")
-
-        await db.commit()
-        await db.refresh(existing)
-        progress = existing
-    else:
-        # First attempt
-        streak = 1 if score >= MASTERY_THRESHOLD else 0
-        history = [score] if score > 0 else []
-        new_interval, new_ef = _calculate_srs(score, 0, 2.5)
-        mode_data = _normalize_mode_data(None, mode, data.role_played)
-        role_key = _role_key(data.role_played)
-        mode_data["best"] = score
-        if data.is_completed and _session_passed_mode(mode, score, session_avg_rt):
-            mode_data["streak"] = 1
-            mode_data["total_success_count"] = 1
-            if role_key:
-                mode_data["role_success_counts"][role_key] = 1
-            mode_data["success_count"] = _effective_success_count(mode_data, mode)
-            mode_data["last_success_at"] = now.isoformat()
-        mode_data["passed"] = (
-            mode_data["success_count"]
-            >= MODE_UNLOCK_RULES.get(mode, {}).get("successes", 1)
-        )
-        if mode_data["passed"]:
-            mode_data["passed_at"] = now.isoformat()
-        mode_scores = {str(mode): mode_data}
-        
+    if progress is None:
         progress = UserProgress(
-            user_id=user.id,
+            user_id=locked_user.id,
             conversation_id=data.conversation_id,
-            role_played=data.role_played,
+            role_played=role,
             completed_lines=data.completed_lines,
             total_lines=data.total_lines,
-            is_completed=data.is_completed,
-            pronunciation_score=score,
-            best_score=score,
-            streak_perfect=streak,
-            mastery_level=_calculate_mastery(1, score, streak, history),
-            scores_history=history,
-            current_mode=_calculate_current_mode(mode_scores, now=now),
-            mode_scores=mode_scores,
-            response_times=new_response_times,
-            avg_response_time=session_avg_rt,
-            review_interval=new_interval,
-            ease_factor=new_ef,
-            next_review_at=now + timedelta(days=new_interval),
-            last_practiced_at=now
+            is_completed=False,
+            pronunciation_score=None,
+            practice_count=0,
+            best_score=0,
+            streak_perfect=0,
+            mastery_level=0,
+            scores_history=[],
+            current_mode=unlocked_mode,
+            mode_scores={},
+            response_times=[],
+            avg_response_time=0,
+            review_interval=1,
+            ease_factor=2.5,
+            srs_repetitions=0,
+            next_review_at=None,
+            last_practiced_at=now,
         )
         db.add(progress)
+        progress_items.append(progress)
+    else:
+        progress.last_practiced_at = now
+        progress.total_lines = data.total_lines
+        if progress.is_completed:
+            # Curriculum edits can reduce the number of lines after a prior
+            # completion. Keep the aggregate valid without treating a partial
+            # retry as a new completion.
+            progress.completed_lines = min(
+                progress.completed_lines, data.total_lines
+            )
+        else:
+            progress.completed_lines = max(progress.completed_lines, data.completed_lines)
+
+    if data.is_completed and score is not None:
+        progress.completed_lines = data.completed_lines
+        progress.total_lines = data.total_lines
+        progress.is_completed = True
+        progress.pronunciation_score = score
+        progress.practice_count += 1
+        progress.best_score = max(progress.best_score, score)
+        progress.streak_perfect = (
+            progress.streak_perfect + 1 if score >= MASTERY_THRESHOLD else 0
+        )
+
+        history = list(progress.scores_history or [])
+        history.append(score)
+        progress.scores_history = history[-MAX_HISTORY:]
+        response_history = list(progress.response_times or [])
+        response_history.extend(response_times)
+        progress.response_times = response_history[-MAX_RESPONSE_HISTORY:]
+        progress.avg_response_time = (
+            round(sum(progress.response_times) / len(progress.response_times), 2)
+            if progress.response_times
+            else 0
+        )
+
+        mode_scores = dict(progress.mode_scores or {})
+        mode_key = str(data.practice_mode)
+        mode_data = _normalize_mode_data(
+            mode_scores.get(mode_key), data.practice_mode, role
+        )
+        was_passed = mode_data["passed"]
+        mode_data["best"] = max(mode_data["best"], score)
+        if _session_passed_mode(data.practice_mode, score, session_avg_rt):
+            mode_data["streak"] += 1
+            mode_data["total_success_count"] += 1
+            mode_data["role_success_counts"][role.value] += 1
+            mode_data["success_count"] = _effective_success_count(
+                mode_data, data.practice_mode
+            )
+            mode_data["last_success_at"] = now.isoformat()
+        else:
+            mode_data["streak"] = 0
+        mode_data["passed"] = (
+            mode_data["success_count"]
+            >= MODE_UNLOCK_RULES[data.practice_mode]["successes"]
+        )
+        if mode_data["passed"] and not was_passed:
+            mode_data["passed_at"] = now.isoformat()
+        mode_scores[mode_key] = mode_data
+        progress.mode_scores = mode_scores
+
+        interval, ease, repetitions = _calculate_srs(
+            score,
+            progress.review_interval,
+            progress.ease_factor,
+            progress.srs_repetitions,
+        )
+        progress.review_interval = interval
+        progress.ease_factor = ease
+        progress.srs_repetitions = repetitions
+        progress.next_review_at = now + timedelta(days=interval)
+        progress.mastery_level = _calculate_mastery(
+            progress.practice_count,
+            progress.best_score,
+            progress.streak_perfect,
+            progress.scores_history,
+        )
+
+        locked_user.total_xp = int(locked_user.total_xp or 0) + xp_gained
+        _update_user_streak(locked_user, now)
+        flag_modified(progress, "mode_scores")
+        flag_modified(progress, "scores_history")
+        flag_modified(progress, "response_times")
+
+    attempt = PracticeAttempt(
+        client_attempt_id=data.attempt_id,
+        user_id=locked_user.id,
+        conversation_id=data.conversation_id,
+        role_played=role,
+        completed_lines=data.completed_lines,
+        total_lines=data.total_lines,
+        is_completed=data.is_completed,
+        pronunciation_score=score,
+        practice_mode=data.practice_mode,
+        response_times=response_times,
+        avg_response_time=session_avg_rt,
+        xp_awarded=xp_gained,
+        created_at=now,
+    )
+    db.add(attempt)
+
+    merged_after: dict = {}
+    for item in progress_items:
+        merged_after = _merge_mode_scores(
+            merged_after, item.mode_scores or {}, item.role_played
+        )
+    current_mode = _calculate_current_mode(merged_after)
+    for item in progress_items:
+        item.current_mode = current_mode
+
+    try:
         await db.commit()
-        await db.refresh(progress)
+    except IntegrityError as exc:
+        await db.rollback()
+        duplicate = (
+            await db.execute(
+                select(PracticeAttempt).where(
+                    PracticeAttempt.user_id == user.id,
+                    PracticeAttempt.client_attempt_id == data.attempt_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if duplicate is None or not _attempt_matches(duplicate, data):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Progress could not be saved because of a concurrent update",
+            ) from exc
+        conversation = (
+            await db.execute(
+                select(Conversation).where(Conversation.id == data.conversation_id)
+            )
+        ).scalar_one()
+        progress_items = list(
+            (
+                await db.execute(
+                    select(UserProgress).where(
+                        UserProgress.user_id == user.id,
+                        UserProgress.conversation_id == data.conversation_id,
+                    )
+                )
+            ).scalars()
+        )
+        return _save_response(
+            progress_items,
+            conversation,
+            data.attempt_id,
+            xp_gained=0,
+            was_duplicate=True,
+        )
 
-    return _to_response(progress)
+    return _save_response(
+        progress_items,
+        conversation,
+        data.attempt_id,
+        xp_gained=xp_gained,
+        was_duplicate=False,
+    )
 
 
-@router.get("", response_model=list[ProgressResponse])
+@router.get("", response_model=list[PracticeAttemptResponse])
 async def get_progress(
+    response: Response,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    total = await db.scalar(
+        select(func.count(PracticeAttempt.id)).where(
+            PracticeAttempt.user_id == user.id
+        )
+    )
+    response.headers["X-Total-Count"] = str(int(total or 0))
+    result = await db.execute(
+        select(PracticeAttempt, Conversation)
+        .join(Conversation, PracticeAttempt.conversation_id == Conversation.id)
+        .where(PracticeAttempt.user_id == user.id)
+        .order_by(PracticeAttempt.created_at.desc(), PracticeAttempt.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    return [
+        _to_attempt_response(attempt, conversation)
+        for attempt, conversation in result.all()
+    ]
+
+
+async def _progress_groups(
+    db: AsyncSession,
+    user_id: UUID,
+) -> list[tuple[Conversation, list[UserProgress]]]:
     result = await db.execute(
         select(UserProgress, Conversation)
         .join(Conversation, UserProgress.conversation_id == Conversation.id)
-        .where(UserProgress.user_id == user.id)
+        .where(UserProgress.user_id == user_id)
         .order_by(UserProgress.last_practiced_at.desc())
-        .limit(50)
     )
-    items = result.all()
-    grouped: dict[str, dict] = {}
-    for progress, conversation in items:
-        conv_key = str(progress.conversation_id)
-        if conv_key not in grouped:
-            grouped[conv_key] = {"conversation": conversation, "progress": []}
-        grouped[conv_key]["progress"].append(progress)
-
-    responses = [
-        _to_grouped_response(group["progress"], group["conversation"])
-        for group in grouped.values()
-    ]
-    return sorted(responses, key=lambda item: item.last_practiced_at, reverse=True)[:50]
+    grouped: dict[UUID, tuple[Conversation, list[UserProgress]]] = {}
+    for progress, conversation in result.all():
+        if conversation.id not in grouped:
+            grouped[conversation.id] = (conversation, [])
+        grouped[conversation.id][1].append(progress)
+    return list(grouped.values())
 
 
 @router.get("/stats", response_model=ProgressStatsResponse)
@@ -501,95 +874,69 @@ async def get_stats(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    total = await db.execute(
-        select(func.count(UserProgress.id)).where(UserProgress.user_id == user.id)
-    )
-    total_practiced = total.scalar()
+    groups = await _progress_groups(db, user.id)
+    summaries = [
+        _to_grouped_response(items, conversation)
+        for conversation, items in groups
+    ]
+    summaries.sort(key=lambda item: item.last_practiced_at, reverse=True)
 
-    completed = await db.execute(
-        select(func.count(UserProgress.id)).where(
-            UserProgress.user_id == user.id,
-            UserProgress.is_completed == True,
-        )
-    )
-    total_completed = completed.scalar()
-
-    avg = await db.execute(
-        select(func.avg(UserProgress.pronunciation_score)).where(
-            UserProgress.user_id == user.id,
-            UserProgress.pronunciation_score.isnot(None),
-        )
-    )
-    avg_score = avg.scalar()
-
-    mastered = await db.execute(
-        select(func.count(UserProgress.id)).where(
-            UserProgress.user_id == user.id,
-            UserProgress.mastery_level >= 95.0,
-        )
-    )
-    total_mastered = mastered.scalar()
-
-    overall = await db.execute(
-        select(func.avg(UserProgress.mastery_level)).where(
-            UserProgress.user_id == user.id,
-            UserProgress.mastery_level > 0,
-        )
-    )
-    overall_mastery = overall.scalar()
-
-    due = await db.execute(
-        select(func.count(UserProgress.id)).where(
-            UserProgress.user_id == user.id,
-            UserProgress.next_review_at <= datetime.now(timezone.utc)
-        )
-    )
-    due_count = due.scalar()
-
-    recent = await db.execute(
-        select(UserProgress, Conversation)
-        .join(Conversation, UserProgress.conversation_id == Conversation.id)
-        .where(UserProgress.user_id == user.id)
-        .order_by(UserProgress.last_practiced_at.desc())
-        .limit(10)
-    )
-    recent_items = recent.all()
-    recent_conv_ids = []
-    for progress, _ in recent_items:
-        if progress.conversation_id not in recent_conv_ids:
-            recent_conv_ids.append(progress.conversation_id)
-
-    grouped_recent: dict[str, dict] = {}
-    if recent_conv_ids:
-        all_recent_progress = await db.execute(
-            select(UserProgress, Conversation)
-            .join(Conversation, UserProgress.conversation_id == Conversation.id)
-            .where(
-                UserProgress.user_id == user.id,
-                UserProgress.conversation_id.in_(recent_conv_ids),
+    average_row = (
+        await db.execute(
+            select(
+                func.sum(
+                    PracticeAttempt.pronunciation_score
+                    * PracticeAttempt.session_count
+                ),
+                func.sum(PracticeAttempt.session_count),
+            ).where(
+                PracticeAttempt.user_id == user.id,
+                PracticeAttempt.is_completed.is_(True),
+                PracticeAttempt.pronunciation_score.isnot(None),
             )
         )
-        for progress, conversation in all_recent_progress.all():
-            conv_key = str(progress.conversation_id)
-            if conv_key not in grouped_recent:
-                grouped_recent[conv_key] = {"conversation": conversation, "progress": []}
-            grouped_recent[conv_key]["progress"].append(progress)
+    ).one()
+    weighted_total, score_count = average_row
+    average_score = (
+        round(float(weighted_total) / int(score_count), 1)
+        if weighted_total is not None and score_count
+        else None
+    )
 
-    recent_progress = []
-    for conv_id in recent_conv_ids:
-        group = grouped_recent.get(str(conv_id))
-        if group:
-            recent_progress.append(_to_grouped_response(group["progress"], group["conversation"]))
+    now = datetime.now(timezone.utc)
+    total_practiced = sum(item.practice_count for item in summaries)
+    total_completed = sum(1 for item in summaries if item.is_completed)
+    mastered = [item for item in summaries if item.mastery_level >= 95]
+    mastered_values = [
+        item.mastery_level for item in summaries if item.mastery_level > 0
+    ]
+    due_for_review = await db.scalar(
+        select(func.count(func.distinct(UserProgress.conversation_id)))
+        .join(Conversation, UserProgress.conversation_id == Conversation.id)
+        .join(Topic, Conversation.topic_id == Topic.id)
+        .where(
+            UserProgress.user_id == user.id,
+            UserProgress.practice_count > 0,
+            UserProgress.next_review_at.isnot(None),
+            UserProgress.next_review_at <= now,
+            Conversation.is_published.is_(True),
+            Topic.is_published.is_(True),
+        )
+    )
 
     return ProgressStatsResponse(
         total_practiced=total_practiced,
         total_completed=total_completed,
-        average_score=round(avg_score, 1) if avg_score else None,
-        streak_days=user.streak_count,
-        total_mastered=total_mastered or 0,
-        overall_mastery=round(overall_mastery, 1) if overall_mastery else 0.0,
-        due_for_review=due_count or 0,
-        recent_progress=recent_progress,
+        average_score=average_score,
+        streak_days=_effective_streak_count(user, now),
+        total_mastered=len(mastered),
+        overall_mastery=(
+            round(sum(mastered_values) / len(mastered_values), 1)
+            if mastered_values
+            else 0.0
+        ),
+        due_for_review=int(due_for_review or 0),
+        recent_progress=summaries[:10],
     )
 
 
@@ -598,96 +945,88 @@ async def get_mastery_map(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    result = await db.execute(
-        select(UserProgress).where(UserProgress.user_id == user.id)
-    )
-    items = result.scalars().all()
-
+    groups = await _progress_groups(db, user.id)
     mastery_map = {}
-    for p in items:
-        conv_id = str(p.conversation_id)
-        if conv_id not in mastery_map:
-            mastery_map[conv_id] = {
-                "mastery_level": 0,
-                "practice_count": 0,
-                "best_score": 0,
-                "streak_perfect": 0,
-                "pronunciation_score": 0,
-                "current_mode": 1,
-                "avg_response_time": 0,
-                "mode_scores": {},
-            }
-
-        item = mastery_map[conv_id]
-        item["mastery_level"] = max(item["mastery_level"], p.mastery_level)
-        item["practice_count"] += p.practice_count
-        item["best_score"] = max(item["best_score"], p.best_score)
-        item["streak_perfect"] = max(item["streak_perfect"], p.streak_perfect)
-        item["pronunciation_score"] = max(item["pronunciation_score"], p.pronunciation_score or 0)
-        item["avg_response_time"] = (
-            min(item["avg_response_time"], p.avg_response_time)
-            if item["avg_response_time"] and p.avg_response_time
-            else item["avg_response_time"] or p.avg_response_time
-        )
-        item["mode_scores"] = _merge_mode_scores(item["mode_scores"], p.mode_scores or {}, p.role_played.value)
-        item["current_mode"] = _calculate_current_mode(item["mode_scores"])
-
+    for conversation, items in groups:
+        response = _to_grouped_response(items, conversation)
+        mastery_map[str(conversation.id)] = {
+            "mastery_level": response.mastery_level,
+            "practice_count": response.practice_count,
+            "best_score": response.best_score,
+            "streak_perfect": response.streak_perfect,
+            "pronunciation_score": response.pronunciation_score or 0,
+            "current_mode": response.current_mode,
+            "avg_response_time": response.avg_response_time,
+            "mode_scores": response.mode_scores,
+        }
     return mastery_map
 
 
 @router.get("/review")
 async def get_review_list(
+    limit: int = Query(default=50, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    from app.models.conversation import Conversation
     now = datetime.now(timezone.utc)
+    due_rows = (
+        await db.execute(
+            select(UserProgress, Conversation)
+            .join(Conversation, UserProgress.conversation_id == Conversation.id)
+            .join(Topic, Topic.id == Conversation.topic_id)
+            .where(
+                UserProgress.user_id == user.id,
+                UserProgress.practice_count > 0,
+                UserProgress.next_review_at.isnot(None),
+                UserProgress.next_review_at <= now,
+                Conversation.is_published.is_(True),
+                Topic.is_published.is_(True),
+            )
+            .order_by(UserProgress.next_review_at.asc())
+        )
+    ).all()
+    due_ids: list[UUID] = []
+    overdue_by_conversation: dict[UUID, float] = {}
+    for progress, _ in due_rows:
+        if progress.conversation_id not in due_ids:
+            due_ids.append(progress.conversation_id)
+        overdue = (now - _as_utc(progress.next_review_at)).total_seconds() / 86400
+        overdue_by_conversation[progress.conversation_id] = max(
+            overdue_by_conversation.get(progress.conversation_id, 0), overdue
+        )
+    due_ids = due_ids[:limit]
+    if not due_ids:
+        return []
+
     result = await db.execute(
         select(UserProgress, Conversation)
         .join(Conversation, UserProgress.conversation_id == Conversation.id)
         .where(
             UserProgress.user_id == user.id,
-            UserProgress.next_review_at <= now
+            UserProgress.conversation_id.in_(due_ids),
         )
-        .order_by(UserProgress.next_review_at.asc())
     )
-    items = result.all()
-    review_conv_ids = []
-    overdue_by_conv: dict[str, float] = {}
-    for progress, _ in items:
-        conv_key = str(progress.conversation_id)
-        if progress.conversation_id not in review_conv_ids:
-            review_conv_ids.append(progress.conversation_id)
-        overdue = (now - progress.next_review_at).total_seconds() / 86400
-        overdue_by_conv[conv_key] = max(overdue_by_conv.get(conv_key, overdue), overdue)
-
-    grouped_review: dict[str, dict] = {}
-    if review_conv_ids:
-        all_review_progress = await db.execute(
-            select(UserProgress, Conversation)
-            .join(Conversation, UserProgress.conversation_id == Conversation.id)
-            .where(
-                UserProgress.user_id == user.id,
-                UserProgress.conversation_id.in_(review_conv_ids),
-            )
-        )
-        for progress, conversation in all_review_progress.all():
-            conv_key = str(progress.conversation_id)
-            if conv_key not in grouped_review:
-                grouped_review[conv_key] = {"conversation": conversation, "progress": []}
-            grouped_review[conv_key]["progress"].append(progress)
+    grouped: dict[UUID, tuple[Conversation, list[UserProgress]]] = {}
+    for progress, conversation in result.all():
+        if conversation.id not in grouped:
+            grouped[conversation.id] = (conversation, [])
+        grouped[conversation.id][1].append(progress)
 
     review_items = []
-    for conv_id in review_conv_ids:
-        conv_key = str(conv_id)
-        group = grouped_review.get(conv_key)
-        if not group:
+    for conversation_id in due_ids:
+        group = grouped.get(conversation_id)
+        if group is None:
             continue
-        response = _to_grouped_response(group["progress"], group["conversation"])
-        review_items.append({
-            "progress": response,
-            "conversation_title": group["conversation"].title,
-            "conversation_situation": group["conversation"].situation,
-            "overdue_days": round(overdue_by_conv.get(conv_key, 0), 1)
-        })
+        conversation, items = group
+        response = _to_grouped_response(items, conversation)
+        review_items.append(
+            {
+                "progress": response,
+                "conversation_title": conversation.title,
+                "conversation_situation": conversation.situation or "",
+                "overdue_days": round(
+                    overdue_by_conversation.get(conversation_id, 0), 1
+                ),
+            }
+        )
     return review_items

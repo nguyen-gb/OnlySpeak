@@ -3,32 +3,11 @@
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { useTopic, useMasteryMap } from "@/hooks/useApi";
+import { QueryError } from "@/components/QueryState";
 import { ArrowLeft, Play, Users, MessageSquare, Trophy, Flame, Target, Zap } from "lucide-react";
 import styles from "./topicDetail.module.css";
 
 // ── Types and Helpers ────────────────────────────────────────────────────────
-interface Topic {
-  id: string;
-  title: string;
-  description?: string;
-  level: string;
-  icon: string;
-}
-
-interface Conversation {
-  id: string;
-  title: string;
-  situation: string;
-  role_a_name: string;
-  role_b_name: string;
-  line_count: number;
-}
-
-interface TopicData {
-  topic: Topic;
-  conversations: Conversation[];
-}
-
 const ROLE_SUCCESS_CAP_BY_MODE: Record<number, number> = {
   1: 2,
   2: 2,
@@ -46,7 +25,8 @@ function getCompletedModeCount(modeScores?: Record<string, { passed?: boolean }>
 
 function TopicDetailSkeleton() {
   return (
-    <div className="animate-fade-in" aria-label="Loading topic">
+    <div className="animate-fade-in" role="status" aria-live="polite">
+      <span className="sr-only">Loading topic and conversations</span>
       <div className={`skeleton skeleton-text ${styles.backSkeleton}`} />
       <div className={styles.topicHeader}>
         <div className={`skeleton ${styles.topicIconBig}`} />
@@ -100,23 +80,40 @@ function getRoleProgress(mode: number, modeData?: { role_success_counts?: Record
 }
 
 function getMasteryLabel(level: number) {
-  if (level >= 95) return { text: "Mastered", color: "#10b981", emoji: "🏆" };
-  if (level >= 75) return { text: "Advanced", color: "#f59e0b", emoji: "🔥" };
-  if (level >= 50) return { text: "Intermediate", color: "#3b82f6", emoji: "📈" };
-  if (level >= 25) return { text: "Beginner", color: "#8b5cf6", emoji: "🌱" };
-  if (level > 0) return { text: "Started", color: "#6b7280", emoji: "👣" };
-  return { text: "New", color: "#cbd5e1", emoji: "" };
+  if (level >= 95) return { text: "Mastered", color: "#10b981" };
+  if (level >= 75) return { text: "Advanced", color: "#f59e0b" };
+  if (level >= 50) return { text: "Intermediate", color: "#3b82f6" };
+  if (level >= 25) return { text: "Beginner", color: "#8b5cf6" };
+  if (level > 0) return { text: "Started", color: "#6b7280" };
+  return { text: "New", color: "#64748b" };
 }
 
 export default function TopicDetailPage() {
   const params = useParams();
-  const topicId = params.id as string;
-  const { data: rawData, isLoading: topicLoading } = useTopic(topicId);
-  const data = rawData as TopicData | undefined;
-  const { data: masteryMap = {}, isLoading: masteryLoading } = useMasteryMap();
+  const idParam = params.id;
+  const topicId = Array.isArray(idParam) ? idParam[0] : (idParam ?? "");
+  const topicQuery = useTopic(topicId);
+  const masteryQuery = useMasteryMap();
+  const data = topicQuery.data;
+  const masteryMap = masteryQuery.data ?? {};
+  const topicLoading = topicQuery.isLoading;
+  const masteryLoading = masteryQuery.isLoading;
   const loading = topicLoading || masteryLoading;
 
   if (loading) return <TopicDetailSkeleton />;
+
+  if (topicQuery.isError || masteryQuery.isError) {
+    return (
+      <QueryError
+        error={topicQuery.error ?? masteryQuery.error}
+        title="This topic couldn't be loaded"
+        onRetry={() => {
+          void topicQuery.refetch();
+          void masteryQuery.refetch();
+        }}
+      />
+    );
+  }
 
   if (!data) {
     return <div className="empty-state"><h3>Topic not found</h3></div>;
@@ -127,12 +124,12 @@ export default function TopicDetailPage() {
   return (
     <div className="animate-fade-in">
       <Link href="/topics" className={styles.backLink}>
-        <ArrowLeft size={18} />
+        <ArrowLeft size={18} aria-hidden="true" />
         Back to Topics
       </Link>
 
       <div className={styles.topicHeader}>
-        <div className={styles.topicIconBig}>{topic.icon}</div>
+        <div className={styles.topicIconBig} aria-hidden="true">{topic.icon}</div>
         <div>
           <h1>{topic.title}</h1>
           {topic.description && <p>{topic.description}</p>}
@@ -143,7 +140,7 @@ export default function TopicDetailPage() {
       </div>
 
       <h2 className={styles.sectionTitle}>
-        <MessageSquare size={20} />
+        <MessageSquare size={20} aria-hidden="true" />
         Conversations ({conversations.length})
       </h2>
 
@@ -156,26 +153,26 @@ export default function TopicDetailPage() {
         <div className={styles.convList}>
           {conversations.map((conv, i) => {
             const mastery = masteryMap[conv.id];
-            const masteryLevel = mastery?.mastery_level || 0;
+            const masteryLevel = Math.min(100, Math.max(0, mastery?.mastery_level ?? 0));
             const masteryInfo = getMasteryLabel(masteryLevel);
-            const practiceCount = mastery?.practice_count || 0;
-            const streak = mastery?.streak_perfect || 0;
-            const currentMode = Math.min(mastery?.current_mode || 1, RELEASED_MODE_COUNT);
+            const practiceCount = mastery?.practice_count ?? 0;
+            const streak = mastery?.streak_perfect ?? 0;
+            const currentMode = Math.min(mastery?.current_mode ?? 1, RELEASED_MODE_COUNT);
             const completedModeCount = getCompletedModeCount(mastery?.mode_scores);
-            const avgRT = mastery?.avg_response_time || 0;
+            const avgRT = mastery?.avg_response_time ?? 0;
 
             return (
               <div
                 key={conv.id}
                 className={styles.convCard}
-                style={{ animationDelay: `${i * 0.05}s` } as React.CSSProperties}
+                style={{ animationDelay: `${i * 0.05}s` }}
               >
                 <div className={styles.convInfo}>
                   <div className={styles.convTitleRow}>
                     <h3>{conv.title}</h3>
                     {masteryLevel >= 95 && (
                       <span className={styles.masteredBadge}>
-                        <Trophy size={14} /> Mastered
+                        <Trophy size={14} aria-hidden="true" /> Mastered
                       </span>
                     )}
                     <span className={styles.modeBadge}>
@@ -187,7 +184,7 @@ export default function TopicDetailPage() {
                   )}
                   <div className={styles.convMeta}>
                     <span className={styles.roles}>
-                      <Users size={14} />
+                      <Users size={14} aria-hidden="true" />
                       {conv.role_a_name} & {conv.role_b_name}
                     </span>
                     <span className={styles.lineCount}>
@@ -195,7 +192,7 @@ export default function TopicDetailPage() {
                     </span>
                     {avgRT > 0 && (
                       <span className={styles.rtStat}>
-                        <Zap size={12} /> {avgRT}s reflex
+                        <Zap size={12} aria-hidden="true" /> {avgRT}s reflex
                       </span>
                     )}
                   </div>
@@ -204,13 +201,20 @@ export default function TopicDetailPage() {
                   <div className={styles.masterySection}>
                     <div className={styles.masteryHeader}>
                       <span className={styles.masteryLabel}>
-                        {masteryInfo.emoji} {masteryInfo.text}
+                        {masteryInfo.text}
                       </span>
                       <span className={styles.masteryPercent} style={{ color: masteryInfo.color }}>
                         {masteryLevel.toFixed(1)}%
                       </span>
                     </div>
-                    <div className={styles.masteryBar}>
+                    <div
+                      className={styles.masteryBar}
+                      role="progressbar"
+                      aria-label={`Mastery for ${conv.title}`}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={masteryLevel}
+                    >
                       <div
                         className={styles.masteryFill}
                         style={{
@@ -225,10 +229,10 @@ export default function TopicDetailPage() {
                     </div>
                     {practiceCount > 0 && (
                       <div className={styles.masteryMeta}>
-                        <span><Target size={12} /> {practiceCount}x practiced</span>
+                        <span><Target size={12} aria-hidden="true" /> {practiceCount} times practiced</span>
                         {streak > 0 && (
                           <span className={styles.streakBadge}>
-                            <Flame size={12} /> {streak} streak
+                            <Flame size={12} aria-hidden="true" /> {streak} streak
                           </span>
                         )}
                         {masteryLevel < 95 && (() => {
@@ -245,12 +249,10 @@ export default function TopicDetailPage() {
                                 : currentMode === 5
                                   ? `Need ${remaining} more Fluent sessions (>=90%)`
                                 : `Need ${remaining} more perfect sessions (>=90%) in Level ${currentMode}`}
-                              {roleProgress && (
-                                <span className={styles.roleProgressInline}>
-                                  <span className={roleProgress.a > 0 ? styles.roleActive : styles.roleInactive}>Role A</span>
-                                  <span className={roleProgress.b > 0 ? styles.roleActive : styles.roleInactive}>Role B</span>
-                                </span>
-                              )}
+                              <span className={styles.roleProgressInline}>
+                                <span className={roleProgress.a > 0 ? styles.roleActive : styles.roleInactive}>Role A</span>
+                                <span className={roleProgress.b > 0 ? styles.roleActive : styles.roleInactive}>Role B</span>
+                              </span>
                             </span>
                           );
                         })()}
@@ -262,7 +264,7 @@ export default function TopicDetailPage() {
                   href={`/practice/${conv.id}`}
                   className="btn btn-primary"
                 >
-                  <Play size={16} />
+                  <Play size={16} aria-hidden="true" />
                   {practiceCount > 0 ? "Practice Again" : "Practice"}
                 </Link>
               </div>

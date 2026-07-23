@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useAuthStore } from "@/stores/authStore";
 import { useStats, useReviewList } from "@/hooks/useApi";
+import { QueryError } from "@/components/QueryState";
 import {
   BookOpen,
   Target,
@@ -16,42 +17,6 @@ import {
   Zap,
 } from "lucide-react";
 import styles from "./dashboard.module.css";
-
-interface ReviewItem {
-  progress: {
-    id: string;
-    conversation_id: string;
-    current_mode: number;
-    mode_scores?: Record<string, { passed?: boolean }>;
-  };
-  conversation_title: string;
-  conversation_situation: string;
-  overdue_days: number;
-}
-
-interface Stats {
-  total_practiced: number;
-  total_completed: number;
-  average_score: number | null;
-  total_mastered: number;
-  overall_mastery: number;
-  due_for_review: number;
-  recent_progress: RecentProgress[];
-}
-
-interface RecentProgress {
-  id: string;
-  conversation_id: string;
-  conversation_title?: string;
-  conversation_situation?: string;
-  role_played: string;
-  current_mode: number;
-  mode_scores?: Record<string, { passed?: boolean }>;
-  mastery_level?: number;
-  avg_response_time?: number;
-  is_completed: boolean;
-  last_practiced_at: string;
-}
 
 const RELEASED_MODE_COUNT = 4;
 
@@ -116,17 +81,20 @@ function DashboardSkeleton() {
 
 export default function DashboardPage() {
   const { user } = useAuthStore();
-  const { data: rawStats, isLoading: statsLoading } = useStats();
-  const stats = rawStats as Stats | null;
-  const { data: rawReviewList, isLoading: reviewsLoading } = useReviewList();
-  const reviewList = (rawReviewList || []) as ReviewItem[];
+  const statsQuery = useStats();
+  const reviewsQuery = useReviewList();
+  const stats = statsQuery.data;
+  const reviewList = reviewsQuery.data ?? [];
+  const statsLoading = statsQuery.isLoading;
+  const reviewsLoading = reviewsQuery.isLoading;
 
   const loading = statsLoading || reviewsLoading;
+  const hasError = statsQuery.isError || reviewsQuery.isError;
 
-  const overallMastery = stats?.overall_mastery || 0;
+  const overallMastery = stats?.overall_mastery ?? 0;
   const masteryInfo = getMasteryLabel(overallMastery);
-  const streakCount = user?.streak_count || 0;
-  const totalXp = user?.total_xp || 0;
+  const streakCount = user?.streak_count ?? 0;
+  const totalXp = user?.total_xp ?? 0;
 
   return (
     <div className="animate-fade-in">
@@ -137,34 +105,47 @@ export default function DashboardPage() {
           </h1>
           <div className={styles.userStatusRow}>
              <div className={styles.streakBadge}>
-                <Flame size={16} fill="currentColor" />
+                <Flame size={16} fill="currentColor" aria-hidden="true" />
                 <span>{streakCount} Day Streak</span>
              </div>
              <div className={styles.levelBadge}>
-                <Zap size={16} fill="currentColor" />
+                <Zap size={16} fill="currentColor" aria-hidden="true" />
                 <span>Level {Math.floor(totalXp / 100) + 1}</span>
                 <small>({totalXp} XP)</small>
              </div>
           </div>
           <p className={styles.welcomeDesc}>
-            {reviewList.length > 0 
+            {reviewsLoading
+              ? "Checking your review schedule..."
+              : reviewList.length > 0
               ? `You have ${reviewList.length} reviews due today. Keep your streak alive!`
               : "Ready to practice your English speaking skills?"}
           </p>
         </div>
         <Link href="/topics" className="btn btn-primary">
-          <BookOpen size={18} />
+          <BookOpen size={18} aria-hidden="true" />
           Browse Topics
-          <ArrowRight size={16} />
+          <ArrowRight size={16} aria-hidden="true" />
         </Link>
       </div>
 
+      {hasError ? (
+        <QueryError
+          error={statsQuery.error ?? reviewsQuery.error}
+          title="Your dashboard couldn't be loaded"
+          onRetry={() => {
+            void statsQuery.refetch();
+            void reviewsQuery.refetch();
+          }}
+        />
+      ) : null}
+
       {/* Daily Review Section (SRS) */}
-      {reviewList.length > 0 && (
+      {!loading && !hasError && reviewList.length > 0 && (
         <div className={styles.reviewSection}>
           <div className={styles.reviewHeader}>
             <div className={styles.reviewTitle}>
-              <Calendar size={20} />
+              <Calendar size={20} aria-hidden="true" />
               <h2>Daily Review Session</h2>
               <span className={styles.reviewBadge}>{reviewList.length}</span>
             </div>
@@ -178,7 +159,7 @@ export default function DashboardPage() {
                    <div className={styles.reviewMeta}>
                       <span className={styles.modeIndicator}>Level {getCompletedModeCount(item.progress.mode_scores)}/{RELEASED_MODE_COUNT}</span>
                       <span className={styles.overdueText}>
-                        <Clock size={12} /> {item.overdue_days > 0 ? `${item.overdue_days}d overdue` : "Due today"}
+                        <Clock size={12} aria-hidden="true" /> {item.overdue_days > 0 ? `${Math.ceil(item.overdue_days)}d overdue` : "Due today"}
                       </span>
                    </div>
                 </div>
@@ -199,35 +180,39 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {loading ? (
+      {hasError ? null : loading ? (
         <DashboardSkeleton />
       ) : (
         <>
       <div className={styles.statsGrid}>
         <div className="stat-card">
-          <div className="stat-icon"><MessageCircle size={22} /></div>
-          <div className="stat-value">{loading ? "—" : stats?.total_practiced || 0}</div>
+          <div className="stat-icon"><MessageCircle size={22} aria-hidden="true" /></div>
+          <div className="stat-value">{stats?.total_practiced ?? 0}</div>
           <div className="stat-label">Practiced</div>
         </div>
         <div className="stat-card">
           <div className="stat-icon" style={{ background: "var(--success-light)", color: "var(--success)" }}>
-            <Target size={22} />
+            <Target size={22} aria-hidden="true" />
           </div>
-          <div className="stat-value">{loading ? "—" : stats?.total_completed || 0}</div>
+          <div className="stat-value">{stats?.total_completed ?? 0}</div>
           <div className="stat-label">Completed</div>
         </div>
         <div className="stat-card">
           <div className="stat-icon" style={{ background: "var(--warning-light)", color: "var(--warning)" }}>
-            <Award size={22} />
+            <Award size={22} aria-hidden="true" />
           </div>
-          <div className="stat-value">{loading ? "—" : stats?.average_score ? `${stats.average_score}%` : "—"}</div>
+          <div className="stat-value">
+            {stats?.average_score !== null && stats?.average_score !== undefined
+              ? `${stats.average_score}%`
+              : "—"}
+          </div>
           <div className="stat-label">Avg. Score</div>
         </div>
         <div className="stat-card">
           <div className="stat-icon" style={{ background: "#dcfce7", color: "#10b981" }}>
-            <Trophy size={22} />
+            <Trophy size={22} aria-hidden="true" />
           </div>
-          <div className="stat-value">{loading ? "—" : stats?.total_mastered || 0}</div>
+          <div className="stat-value">{stats?.total_mastered ?? 0}</div>
           <div className="stat-label">Mastered</div>
         </div>
       </div>
@@ -236,13 +221,20 @@ export default function DashboardPage() {
       {!loading && stats && stats.total_practiced > 0 && (
         <div className={styles.masteryOverview}>
           <div className={styles.masteryOverviewHeader}>
-            <h2><Flame size={20} /> Overall Mastery</h2>
+            <h2><Flame size={20} aria-hidden="true" /> Overall Mastery</h2>
             <span className={styles.masteryBadge} style={{ background: masteryInfo.color }}>
               {masteryInfo.text}
             </span>
           </div>
           <div className={styles.masteryBarContainer}>
-            <div className={styles.masteryBar}>
+            <div
+              className={styles.masteryBar}
+              role="progressbar"
+              aria-label="Overall conversation mastery"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={overallMastery}
+            >
               <div
                 className={styles.masteryFill}
                 style={{
@@ -259,7 +251,7 @@ export default function DashboardPage() {
           </div>
           {stats.due_for_review > 0 && (
             <div className={styles.srsHint}>
-              <Zap size={14} /> You have <strong>{stats.due_for_review}</strong> conversations due for review to maintain your mastery.
+              <Zap size={14} aria-hidden="true" /> You have <strong>{stats.due_for_review}</strong> conversations due for review to maintain your mastery.
             </div>
           )}
         </div>
@@ -270,7 +262,7 @@ export default function DashboardPage() {
           <h2>Recent History</h2>
           <div className={styles.recentList}>
             {stats.recent_progress.slice(0, 5).map((p) => {
-              const mInfo = getMasteryLabel(p.mastery_level || 0);
+              const mInfo = getMasteryLabel(p.mastery_level ?? 0);
               return (
                 <Link key={p.id} href={`/practice/${p.conversation_id}`} className={styles.recentItem}>
                   <div className={styles.recentInfo}>
@@ -278,9 +270,9 @@ export default function DashboardPage() {
                       {p.conversation_title || `Conversation ${String(p.conversation_id).slice(0, 8)}`}
                     </span>
                     <span className={styles.recentRole}>Role {p.role_played} (Level {getCompletedModeCount(p.mode_scores)}/{RELEASED_MODE_COUNT})</span>
-                    <span className={styles.recentDate}>
+                    <time className={styles.recentDate} dateTime={p.last_practiced_at}>
                       {new Date(p.last_practiced_at).toLocaleDateString()}
-                    </span>
+                    </time>
                   </div>
                   <div className={styles.recentMeta}>
                     {typeof p.avg_response_time === "number" && p.avg_response_time > 0 && (
@@ -290,7 +282,7 @@ export default function DashboardPage() {
                       className={styles.masterySmallBadge}
                       style={{ color: mInfo.color, borderColor: mInfo.color }}
                     >
-                      {mInfo.text} {(p.mastery_level || 0).toFixed(0)}%
+                      {mInfo.text} {(p.mastery_level ?? 0).toFixed(0)}%
                     </span>
                     <span className={`badge ${p.is_completed ? 'badge-success' : 'badge-warning'}`}>
                       {p.is_completed ? 'Completed' : 'Partial'}
@@ -309,7 +301,7 @@ export default function DashboardPage() {
           <h3>No practice sessions yet</h3>
           <p>Start your first conversation to track your progress!</p>
           <Link href="/topics" className="btn btn-primary">
-            Explore Topics <ArrowRight size={16} />
+            Explore Topics <ArrowRight size={16} aria-hidden="true" />
           </Link>
         </div>
       )}

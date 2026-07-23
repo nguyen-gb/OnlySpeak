@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import ThemeProvider from "@/components/ThemeProvider";
 import QueryProvider from "@/components/QueryProvider";
+import AuthBootstrap from "@/components/AuthBootstrap";
 
 export const metadata: Metadata = {
   title: "OnlySpeak - Learn English Through Conversations",
@@ -27,7 +28,15 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body>
         <QueryProvider>
-          <ThemeProvider>{children}</ThemeProvider>
+          <AuthBootstrap />
+          <ThemeProvider>
+            <a className="skip-link" href="#main-content">
+              Skip to main content
+            </a>
+            <div id="main-content" tabIndex={-1}>
+              {children}
+            </div>
+          </ThemeProvider>
         </QueryProvider>
       </body>
     </html>

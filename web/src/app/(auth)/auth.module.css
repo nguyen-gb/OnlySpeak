@@ -314,6 +314,16 @@
   position: relative;
 }
 
+.googleButtonTarget {
+  width: 100%;
+  min-height: 44px;
+}
+
+.googleButtonTarget > div,
+.googleButtonTarget iframe {
+  max-width: 100%;
+}
+
 .googleButtonWrap > div:first-child {
   width: 100%;
   display: flex;

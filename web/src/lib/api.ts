@@ -1,130 +1,150 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
 
 export const API_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
+  (process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000").replace(
+    /\/+$/,
+    ""
+  );
 
-// ── Axios instance ──────────────────────────────────────────────────────────
 const api = axios.create({
   baseURL: API_URL,
   headers: { "Content-Type": "application/json" },
+  timeout: 20_000,
+  withCredentials: true,
 });
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
-function getAccessToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem("access_token");
-}
-
-function getRefreshToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem("refresh_token");
-}
-
-function setTokens(access: string, refresh: string) {
-  localStorage.setItem("access_token", access);
-  localStorage.setItem("refresh_token", refresh);
-}
-
-function clearTokens() {
-  localStorage.removeItem("access_token");
-  localStorage.removeItem("refresh_token");
-}
-
-// ── Request interceptor: attach access token ────────────────────────────────
-api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
-  const token = getAccessToken();
-  if (token && config.headers) {
-    config.headers.set("Authorization", `Bearer ${token}`);
-  }
-  return config;
-});
-
-// ── Response interceptor: auto-refresh on 401 ──────────────────────────────
 const NON_REFRESHABLE = [
   "/api/auth/login",
   "/api/auth/register",
   "/api/auth/google",
   "/api/auth/refresh",
+  "/api/auth/logout",
 ];
 
-let refreshPromise: Promise<boolean> | null = null;
+type RefreshResult = "refreshed" | "invalid" | "unavailable";
+type SessionAwareAxiosError = AxiosError & {
+  sessionRefreshUnavailable?: boolean;
+};
+let refreshPromise: Promise<RefreshResult> | null = null;
 
-async function tryRefresh(): Promise<boolean> {
-  const rt = getRefreshToken();
-  if (!rt) return false;
-
+async function tryRefresh(): Promise<RefreshResult> {
   try {
-    const res = await axios.post(
+    await axios.post(
       `${API_URL}/api/auth/refresh`,
-      { refresh_token: rt }
+      {},
+      { timeout: 20_000, withCredentials: true }
     );
-    setTokens(res.data.access_token, res.data.refresh_token);
-    return true;
+    return "refreshed";
   } catch (error) {
-    console.error("Token refresh failed:", error);
-    return false;
+    if (axios.isAxiosError(error)) {
+      const status = error.response?.status;
+      if (status === 400 || status === 401 || status === 403) {
+        return "invalid";
+      }
+    }
+
+    // A timeout or temporary server outage must not destroy a valid session.
+    return "unavailable";
   }
 }
 
 api.interceptors.response.use(
   (response) => response,
   async (error: AxiosError) => {
-    const originalRequest = error.config as InternalAxiosRequestConfig & {
-      _retry?: boolean;
-    };
+    const originalRequest = error.config as
+      | (InternalAxiosRequestConfig & { _retry?: boolean })
+      | undefined;
 
     if (!originalRequest) return Promise.reject(error);
 
     const endpoint = originalRequest.url || "";
+    const wasRetried = originalRequest._retry === true;
     const relativeUrl = endpoint.startsWith("http")
       ? endpoint.replace(API_URL, "")
       : endpoint;
-    const isNonRefreshable = NON_REFRESHABLE.some((p) =>
-      relativeUrl.startsWith(p)
+    const isNonRefreshable = NON_REFRESHABLE.some((path) =>
+      relativeUrl.startsWith(path)
     );
 
-    if (error.response?.status === 401 && !isNonRefreshable && !originalRequest._retry) {
+    if (
+      error.response?.status === 401 &&
+      !isNonRefreshable &&
+      !originalRequest._retry
+    ) {
       originalRequest._retry = true;
 
-      // Deduplicate concurrent refresh calls
       if (!refreshPromise) {
         refreshPromise = tryRefresh().finally(() => {
           refreshPromise = null;
         });
       }
 
-      const refreshed = await refreshPromise;
-
-      if (refreshed) {
-        const newToken = getAccessToken();
-        if (originalRequest.headers) {
-          originalRequest.headers.set("Authorization", `Bearer ${newToken}`);
-        }
+      const result = await refreshPromise;
+      if (result === "refreshed") {
         return api(originalRequest);
       }
 
-      // Refresh failed → force logout
-      clearTokens();
-      if (typeof window !== "undefined") {
-        window.location.href = "/login";
+      if (result === "invalid" && typeof window !== "undefined") {
+        window.dispatchEvent(new Event("onlyspeak:session-expired"));
       }
+
+      if (result === "unavailable") {
+        (error as SessionAwareAxiosError).sessionRefreshUnavailable = true;
+      }
+    }
+
+    if (
+      error.response?.status === 401 &&
+      !isNonRefreshable &&
+      wasRetried &&
+      typeof window !== "undefined"
+    ) {
+      window.dispatchEvent(new Event("onlyspeak:session-expired"));
     }
 
     return Promise.reject(error);
   }
 );
 
-// ── Export a typed error helper ─────────────────────────────────────────────
 export function getErrorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
-    return (
-      error.response?.data?.detail ||
-      error.response?.data?.message ||
-      error.message
-    );
+    const detail = error.response?.data?.detail;
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail)) {
+      const validationMessages = detail
+        .map((item) => {
+          if (typeof item !== "object" || item === null) return null;
+          const message = "msg" in item ? String(item.msg) : "Invalid value";
+          const location =
+            "loc" in item && Array.isArray(item.loc)
+              ? item.loc.slice(1).map(String).join(".")
+              : "";
+          return location ? `${location}: ${message}` : message;
+        })
+        .filter((item): item is string => Boolean(item));
+      if (validationMessages.length > 0) {
+        return validationMessages.join("; ");
+      }
+    }
+
+    const message = error.response?.data?.message;
+    if (typeof message === "string") return message;
+
+    return error.message;
   }
+
   if (error instanceof Error) return error.message;
   return "Something went wrong";
+}
+
+export function isTransientApiError(error: unknown): boolean {
+  if (!axios.isAxiosError(error)) return false;
+  const sessionError = error as SessionAwareAxiosError;
+  return (
+    sessionError.sessionRefreshUnavailable === true ||
+    !error.response ||
+    error.response.status >= 500
+  );
 }
 
 export { api };

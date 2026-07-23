@@ -88,6 +88,22 @@
   gap: 8px;
 }
 
+.themeIconSun {
+  display: none;
+}
+
+.themeIconMoon {
+  display: block;
+}
+
+[data-theme="dark"] .themeIconSun {
+  display: block;
+}
+
+[data-theme="dark"] .themeIconMoon {
+  display: none;
+}
+
 /* Hero */
 .hero {
   position: relative;
@@ -478,5 +494,28 @@
 
   .contactLinks {
     justify-content: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .headerInner {
+    height: 60px;
+    padding: 0 12px;
+  }
+
+  .logoText {
+    display: none;
+  }
+
+  .headerActions {
+    gap: 4px;
+  }
+
+  .signInLink {
+    display: none;
+  }
+
+  .hero {
+    padding-inline: 16px;
   }
 }

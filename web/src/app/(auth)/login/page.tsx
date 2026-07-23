@@ -1,15 +1,36 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import Script from "next/script";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/stores/authStore";
+import { getErrorMessage } from "@/lib/api";
 import { AlertCircle, Mic, Sparkles, Volume2 } from "lucide-react";
 import styles from "../auth.module.css";
 
 interface GoogleCredentialResponse {
   credential?: string;
+}
+
+function getPostLoginPath(): string {
+  if (typeof window === "undefined") return "/dashboard";
+  const candidate = new URLSearchParams(window.location.search).get("next");
+  if (candidate) {
+    try {
+      const destination = new URL(candidate, window.location.origin);
+      if (
+        destination.origin === window.location.origin &&
+        !destination.pathname.startsWith("/login")
+      ) {
+        return `${destination.pathname}${destination.search}${destination.hash}`;
+      }
+    } catch {
+      // Fall through to the safe default.
+    }
+  }
+  return "/dashboard";
 }
 
 declare global {
@@ -40,14 +61,21 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [googleLoading, setGoogleLoading] = useState(false);
   const googleButtonRef = useRef<HTMLDivElement>(null);
-  const { googleLogin } = useAuthStore();
+  const googleLogin = useAuthStore((state) => state.googleLogin);
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const isInitialized = useAuthStore((state) => state.isInitialized);
+  const sessionError = useAuthStore((state) => state.sessionError);
   const router = useRouter();
   const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || "";
 
   useEffect(() => {
-    if (!googleClientId || !googleButtonRef.current) return;
+    if (isInitialized && isAuthenticated) {
+      router.replace(getPostLoginPath());
+    }
+  }, [isAuthenticated, isInitialized, router]);
 
-    const handleGoogleCredential = async (response: GoogleCredentialResponse) => {
+  const handleGoogleCredential = useCallback(
+    async (response: GoogleCredentialResponse) => {
       if (!response.credential) {
         setError("Google did not return a login token.");
         return;
@@ -57,45 +85,53 @@ export default function LoginPage() {
       setGoogleLoading(true);
       try {
         await googleLogin(response.credential);
-        router.push("/dashboard");
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Google sign in failed");
+        router.replace(getPostLoginPath());
+      } catch (loginError) {
+        setError(getErrorMessage(loginError));
       } finally {
         setGoogleLoading(false);
       }
-    };
+    },
+    [googleLogin, router]
+  );
 
-    const renderGoogleButton = () => {
+  const renderGoogleButton = useCallback(() => {
       if (!window.google || !googleButtonRef.current) return;
       googleButtonRef.current.innerHTML = "";
       window.google.accounts.id.initialize({
         client_id: googleClientId,
         callback: handleGoogleCredential,
       });
+      const availableWidth = Math.max(
+        200,
+        Math.min(340, googleButtonRef.current.clientWidth || 340)
+      );
       window.google.accounts.id.renderButton(googleButtonRef.current, {
         theme: "outline",
         size: "large",
         text: "signin_with",
-        width: 340,
+        width: availableWidth,
       });
-    };
+    }, [googleClientId, handleGoogleCredential]);
 
+  useEffect(() => {
+    if (!googleClientId || !googleButtonRef.current) return;
     if (window.google) {
       renderGoogleButton();
-      return;
     }
-
-    const script = document.createElement("script");
-    script.src = "https://accounts.google.com/gsi/client";
-    script.async = true;
-    script.defer = true;
-    script.onload = renderGoogleButton;
-    script.onerror = () => setError("Could not load Google sign in.");
-    document.head.appendChild(script);
-  }, [googleClientId, googleLogin, router]);
+  }, [googleClientId, renderGoogleButton]);
 
   return (
     <div className={styles.authPage}>
+      {googleClientId ? (
+        <Script
+          id="google-identity-services"
+          src="https://accounts.google.com/gsi/client"
+          strategy="afterInteractive"
+          onReady={renderGoogleButton}
+          onError={() => setError("Could not load Google sign in.")}
+        />
+      ) : null}
       <div className={styles.authGlow} />
       <div className={styles.authGlowSecondary} />
       <div className={styles.authShell}>
@@ -154,17 +190,17 @@ export default function LoginPage() {
             <p>Continue your English practice with one secure Google sign-in.</p>
           </div>
 
-          {error && (
-            <div className="alert alert-error">
+          {(error || sessionError) && (
+            <div className="alert alert-error" role="alert">
               <AlertCircle size={16} />
-              {error}
+              {error || sessionError}
             </div>
           )}
 
           <div className={styles.googleSection}>
             {googleClientId ? (
               <div className={styles.googleButtonWrap}>
-                <div ref={googleButtonRef} />
+                <div ref={googleButtonRef} className={styles.googleButtonTarget} />
                 {googleLoading ? (
                   <div className={styles.googleOverlay}>
                     <div className="spinner" />

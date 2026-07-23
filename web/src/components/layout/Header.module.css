@@ -9,6 +9,22 @@
   background: rgba(255, 255, 255, 0.85);
 }
 
+.themeIconSun {
+  display: none;
+}
+
+.themeIconMoon {
+  display: block;
+}
+
+:global([data-theme="dark"]) .themeIconSun {
+  display: block;
+}
+
+:global([data-theme="dark"]) .themeIconMoon {
+  display: none;
+}
+
 [data-theme="dark"] .header {
   background: rgba(10, 10, 10, 0.85);
 }
@@ -115,6 +131,7 @@
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+  margin-left: auto;
 }
 
 .feedbackLink {
@@ -172,9 +189,82 @@
   white-space: nowrap;
 }
 
-@media (max-width: 768px) {
+.menuButton,
+.mobileNav {
+  display: none;
+}
+
+.headerError {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 16px;
+  max-width: min(360px, calc(100vw - 32px));
+  padding: 10px 14px;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: var(--radius);
+  background: var(--danger-light);
+  color: var(--danger);
+  box-shadow: var(--shadow-md);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+@media (max-width: 900px) {
+  .inner {
+    padding-inline: 18px;
+    gap: 16px;
+  }
+
   .nav {
     display: none;
+  }
+
+  .desktopAction {
+    display: none;
+  }
+
+  .menuButton {
+    display: inline-flex;
+  }
+
+  .mobileNav {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    display: grid;
+    gap: 4px;
+    max-height: calc(100vh - var(--header-height));
+    padding: 12px 18px 18px;
+    overflow-y: auto;
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border);
+    box-shadow: var(--shadow-lg);
+  }
+
+  .mobileNavLink {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 11px 12px;
+    color: var(--text-secondary);
+    font-size: 14px;
+    font-weight: 600;
+    border-radius: var(--radius);
+  }
+
+  .mobileNavLink:hover {
+    color: var(--text);
+    background: var(--bg-tertiary);
+  }
+
+  .mobileNavLink.active {
+    color: var(--primary);
+    background: var(--primary-50);
+  }
+
+  [data-theme="dark"] .mobileNavLink.active {
+    background: rgba(234, 59, 146, 0.12);
   }
 
   .userName {
@@ -182,14 +272,31 @@
   }
 }
 
-@media (max-width: 520px) {
-  .feedbackLink span {
+@media (max-width: 480px) {
+  .inner {
+    padding-inline: 12px;
+    gap: 8px;
+  }
+
+  .logoText {
     display: none;
   }
 
-  .feedbackLink {
-    width: 32px;
-    height: 32px;
-    padding: 0;
+  .actions {
+    gap: 4px;
+  }
+
+  .userMenu {
+    gap: 0;
+    padding-left: 4px;
+    margin-left: 0;
+  }
+
+  .avatar {
+    display: none;
+  }
+
+  .mobileNav {
+    padding-inline: 12px;
   }
 }

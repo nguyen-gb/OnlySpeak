@@ -134,3 +134,23 @@
   border-radius: var(--radius-full);
   flex-shrink: 0;
 }
+
+@media (max-width: 520px) {
+  .topicCard {
+    gap: 12px;
+    padding: 16px;
+  }
+
+  .topicIcon,
+  .topicSkeletonIcon {
+    width: 48px;
+    height: 48px;
+    font-size: 28px;
+  }
+
+  .topicMeta {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+}

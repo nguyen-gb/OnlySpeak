@@ -1,14 +1,28 @@
 FROM python:3.12-slim
 
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PORT=5000
+
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN addgroup --system onlyspeak \
+    && adduser --system --ingroup onlyspeak --home /app onlyspeak
 
-COPY . .
+COPY requirements.txt ./
+RUN pip install --no-cache-dir --requirement requirements.txt
 
-RUN mkdir -p static/audio
+COPY --chown=onlyspeak:onlyspeak . .
+RUN mkdir -p /app/static/audio \
+    && chown -R onlyspeak:onlyspeak /app/static
 
-EXPOSE 10000
+USER onlyspeak
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "10000"]
+EXPOSE 5000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD python -c "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('PORT', '5000') + '/api/health', timeout=3)" || exit 1
+
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port \"${PORT}\""]

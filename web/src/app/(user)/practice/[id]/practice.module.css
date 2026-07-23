@@ -515,6 +515,13 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  border: 0;
+  cursor: pointer;
+}
+
+.micActive:focus-visible {
+  outline: 3px solid var(--primary);
+  outline-offset: 4px;
 }
 
 .micRing, .micRing2 {
@@ -637,6 +644,7 @@
 
 .scoredActions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: center;
   gap: 12px;
 }
@@ -840,4 +848,14 @@
   .finalStatsRow { gap: 16px; }
   .finalStatCircle { width: 70px; height: 70px; }
   .finalStatNum { font-size: 20px; }
+}
+
+@media (max-width: 480px) {
+  .scoredActions {
+    flex-direction: column;
+  }
+
+  .scoredActions > button {
+    width: 100%;
+  }
 }

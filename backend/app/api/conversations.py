@@ -1,12 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 from uuid import UUID
 
-from app.database import get_db
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import exists, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.api.deps import get_current_user
+from app.database import get_db
+from app.models.conversation import Conversation, ConversationLine, Speaker
+from app.models.topic import Topic
 from app.models.user import User
-from app.models.conversation import Conversation, ConversationLine
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 
@@ -17,23 +19,44 @@ async def get_conversation(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    result = await db.execute(
-        select(Conversation).where(
-            Conversation.id == conversation_id,
-            Conversation.is_published == True,
+    del user
+    has_role_a = exists(
+        select(ConversationLine.id).where(
+            ConversationLine.conversation_id == Conversation.id,
+            ConversationLine.speaker == Speaker.A,
         )
     )
-    conversation = result.scalar_one_or_none()
-    if not conversation:
+    has_role_b = exists(
+        select(ConversationLine.id).where(
+            ConversationLine.conversation_id == Conversation.id,
+            ConversationLine.speaker == Speaker.B,
+        )
+    )
+    conversation = (
+        await db.execute(
+            select(Conversation)
+            .join(Topic, Topic.id == Conversation.topic_id)
+            .where(
+                Conversation.id == conversation_id,
+                Conversation.is_published.is_(True),
+                Topic.is_published.is_(True),
+                has_role_a,
+                has_role_b,
+            )
+        )
+    ).scalar_one_or_none()
+    if conversation is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    lines_result = await db.execute(
-        select(ConversationLine)
-        .where(ConversationLine.conversation_id == conversation_id)
-        .order_by(ConversationLine.line_order)
+    lines = list(
+        (
+            await db.execute(
+                select(ConversationLine)
+                .where(ConversationLine.conversation_id == conversation_id)
+                .order_by(ConversationLine.line_order)
+            )
+        ).scalars()
     )
-    lines = lines_result.scalars().all()
-
     return {
         "id": conversation.id,
         "topic_id": conversation.topic_id,

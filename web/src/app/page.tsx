@@ -18,7 +18,7 @@ import {
 import styles from "./landing.module.css";
 
 export default function LandingPage() {
-  const { theme, setTheme } = useTheme();
+  const { resolvedTheme, setTheme } = useTheme();
 
   return (
     <div className={styles.landing}>
@@ -38,11 +38,16 @@ export default function LandingPage() {
           <div className={styles.headerActions}>
             <button
               className="btn btn-icon btn-ghost btn-sm"
-              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+              type="button"
+              aria-label="Toggle color theme"
+              onClick={() =>
+                setTheme(resolvedTheme === "dark" ? "light" : "dark")
+              }
             >
-              {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+              <Sun className={styles.themeIconSun} size={18} aria-hidden="true" />
+              <Moon className={styles.themeIconMoon} size={18} aria-hidden="true" />
             </button>
-            <Link href="/login" className="btn btn-sm btn-ghost">
+            <Link href="/login" className={`btn btn-sm btn-ghost ${styles.signInLink}`}>
               Sign In
             </Link>
             <Link href="/login" className="btn btn-sm btn-primary">
@@ -68,7 +73,7 @@ export default function LandingPage() {
           <p className={styles.heroDesc}>
             Practice real-world English dialogues by role-playing conversations.
             Choose a topic, pick a character, speak naturally, and get instant
-            pronunciation feedback — all for free.
+            speech-accuracy feedback — all for free.
           </p>
           <div className={styles.heroCta}>
             <Link href="/login" className="btn btn-lg btn-primary">
@@ -138,8 +143,8 @@ export default function LandingPage() {
               </div>
               <h3>Speak Naturally</h3>
               <p>
-                Listen to your partner&apos;s lines, then speak yours aloud. Our
-                AI scores your pronunciation in real-time.
+                Listen to your partner&apos;s lines, then speak yours aloud. See
+                real-time transcript-accuracy feedback as you speak.
               </p>
             </div>
             <div className={styles.featureCard}>
@@ -169,7 +174,7 @@ export default function LandingPage() {
           </div>
           <div className={styles.statItem}>
             <span className={styles.statNum}>AI</span>
-            <span className={styles.statText}>Pronunciation scoring</span>
+            <span className={styles.statText}>Speech accuracy scoring</span>
           </div>
           <div className={styles.statItem}>
             <span className={styles.statNum}>∞</span>

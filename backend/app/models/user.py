@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 from sqlalchemy import String, Boolean, DateTime, Enum as SAEnum, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
-import sqlalchemy as sa
 
 from app.database import Base
 
@@ -59,4 +58,24 @@ class User(Base):
         nullable=False,
     )
 
-    progress = relationship("UserProgress", back_populates="user", lazy="selectin")
+    progress = relationship(
+        "UserProgress",
+        back_populates="user",
+        lazy="raise",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    practice_attempts = relationship(
+        "PracticeAttempt",
+        back_populates="user",
+        lazy="raise",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    auth_sessions = relationship(
+        "AuthSession",
+        back_populates="user",
+        lazy="raise",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )

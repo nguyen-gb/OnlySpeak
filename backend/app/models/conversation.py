@@ -10,6 +10,9 @@ from sqlalchemy import (
     Text,
     ForeignKey,
     Enum as SAEnum,
+    CheckConstraint,
+    Index,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
@@ -25,6 +28,15 @@ class Speaker(str, enum.Enum):
 
 class Conversation(Base):
     __tablename__ = "conversations"
+    __table_args__ = (
+        CheckConstraint("sort_order >= 0", name="ck_conversation_sort_order_nonnegative"),
+        Index(
+            "ix_conversation_topic_published_sort",
+            "topic_id",
+            "is_published",
+            "sort_order",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -58,15 +70,35 @@ class Conversation(Base):
     lines = relationship(
         "ConversationLine",
         back_populates="conversation",
-        lazy="selectin",
+        lazy="raise",
         order_by="ConversationLine.line_order",
         cascade="all, delete-orphan",
+        passive_deletes=True,
     )
-    progress = relationship("UserProgress", back_populates="conversation")
+    progress = relationship(
+        "UserProgress",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    practice_attempts = relationship(
+        "PracticeAttempt",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
 
 class ConversationLine(Base):
     __tablename__ = "conversation_lines"
+    __table_args__ = (
+        UniqueConstraint(
+            "conversation_id",
+            "line_order",
+            name="uq_conversation_line_order",
+        ),
+        CheckConstraint("line_order >= 1", name="ck_conversation_line_order_positive"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4

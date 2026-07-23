@@ -1,138 +1,185 @@
 "use client";
 
-import Link from "next/link";
+import { useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
+import { LogOut, Mail, Menu, Moon, Sun, User, X } from "lucide-react";
 import { useAuthStore } from "@/stores/authStore";
-import {
-  Sun,
-  Moon,
-  LogOut,
-  Mail,
-  User,
-} from "lucide-react";
 import styles from "./Header.module.css";
 
+interface NavigationItem {
+  href: string;
+  label: string;
+  exact?: boolean;
+}
+
+const USER_NAVIGATION: NavigationItem[] = [
+  { href: "/dashboard", label: "Dashboard", exact: true },
+  { href: "/topics", label: "Topics" },
+  { href: "/history", label: "History", exact: true },
+];
+
+const ADMIN_NAVIGATION: NavigationItem[] = [
+  { href: "/admin", label: "Dashboard", exact: true },
+  { href: "/admin/topics", label: "Topics" },
+  { href: "/admin/conversations", label: "Conversations" },
+  { href: "/admin/users", label: "Users", exact: true },
+];
+
+function isNavigationItemActive(pathname: string, item: NavigationItem) {
+  return item.exact ? pathname === item.href : pathname.startsWith(item.href);
+}
+
+function safeAvatarUrl(value: string | null | undefined): string | null {
+  if (!value) return null;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "https:" &&
+      parsed.hostname === "lh3.googleusercontent.com"
+      ? value
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function Header() {
+  const [openMenuPath, setOpenMenuPath] = useState<string | null>(null);
+  const [logoutError, setLogoutError] = useState("");
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
   const { user, logout } = useAuthStore();
-  const { theme, setTheme } = useTheme();
+  const { resolvedTheme, setTheme } = useTheme();
   const pathname = usePathname();
+  const menuOpen = openMenuPath === pathname;
 
   const isAdmin = pathname.startsWith("/admin");
+  const navigation = isAdmin ? ADMIN_NAVIGATION : USER_NAVIGATION;
+  const viewLabel = isAdmin ? "User view" : "Admin view";
+  const viewHref = isAdmin ? "/dashboard" : "/admin";
+  const avatarUrl = safeAvatarUrl(user?.avatar_url);
+  const closeMenu = () => setOpenMenuPath(null);
 
   return (
-    <header className={styles.header}>
+    <header className={styles.header} onKeyDown={(event) => event.key === "Escape" && closeMenu()}>
       <div className={styles.inner}>
-        <Link href={user ? "/dashboard" : "/"} className={styles.logo}>
-          <div className={styles.logoIcon}>
-            <Image src="/logo.png" alt="OnlySpeak logo" width={36} height={36} className={styles.logoImage} priority />
-            <Image src="/logo-dark.png" alt="" width={36} height={36} className={`${styles.logoImage} ${styles.logoImageDark}`} priority aria-hidden="true" />
-          </div>
+        <Link
+          href={user ? "/dashboard" : "/"}
+          className={styles.logo}
+          onClick={closeMenu}
+          aria-label="OnlySpeak home"
+        >
+          <span className={styles.logoIcon} aria-hidden="true">
+            <Image
+              src="/logo.png"
+              alt=""
+              width={36}
+              height={36}
+              className={styles.logoImage}
+              priority
+            />
+            <Image
+              src="/logo-dark.png"
+              alt=""
+              width={36}
+              height={36}
+              className={`${styles.logoImage} ${styles.logoImageDark}`}
+              priority
+            />
+          </span>
           <span className={styles.logoText}>
             <span className={styles.logoTextOnly}>Only</span>
             <span className={styles.logoTextSpeak}>Speak</span>
           </span>
         </Link>
 
-        <nav className={styles.nav}>
-          {user && !isAdmin && (
-            <>
-              <Link
-                href="/dashboard"
-                className={`${styles.navLink} ${pathname === "/dashboard" ? styles.active : ""}`}
-              >
-                Dashboard
-              </Link>
-              <Link
-                href="/topics"
-                className={`${styles.navLink} ${pathname.startsWith("/topics") ? styles.active : ""}`}
-              >
-                Topics
-              </Link>
-              <Link
-                href="/history"
-                className={`${styles.navLink} ${pathname === "/history" ? styles.active : ""}`}
-              >
-                History
-              </Link>
-            </>
-          )}
-          {user && isAdmin && (
-            <>
-              <Link
-                href="/admin"
-                className={`${styles.navLink} ${pathname === "/admin" ? styles.active : ""}`}
-              >
-                Dashboard
-              </Link>
-              <Link
-                href="/admin/topics"
-                className={`${styles.navLink} ${pathname.startsWith("/admin/topics") ? styles.active : ""}`}
-              >
-                Topics
-              </Link>
-              <Link
-                href="/admin/conversations"
-                className={`${styles.navLink} ${pathname.startsWith("/admin/conversations") ? styles.active : ""}`}
-              >
-                Conversations
-              </Link>
-              <Link
-                href="/admin/users"
-                className={`${styles.navLink} ${pathname === "/admin/users" ? styles.active : ""}`}
-              >
-                Users
-              </Link>
-            </>
-          )}
+        <nav
+          className={styles.nav}
+          aria-label={isAdmin ? "Admin navigation" : "Main navigation"}
+        >
+          {user
+            ? navigation.map((item) => {
+                const active = isNavigationItemActive(pathname, item);
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={`${styles.navLink} ${active ? styles.active : ""}`}
+                    aria-current={active ? "page" : undefined}
+                  >
+                    {item.label}
+                  </Link>
+                );
+              })
+            : null}
         </nav>
 
         <div className={styles.actions}>
-          {user && !isAdmin && (
+          {user && !isAdmin ? (
             <a
               href="mailto:vannguyen.tran.164@gmail.com?subject=OnlySpeak%20Feedback"
-              className={`btn btn-sm btn-ghost ${styles.feedbackLink}`}
-              title="Send feedback by email"
+              className={`btn btn-sm btn-ghost ${styles.feedbackLink} ${styles.desktopAction}`}
             >
-              <Mail size={16} />
+              <Mail size={16} aria-hidden="true" />
               <span>Feedback</span>
             </a>
-          )}
+          ) : null}
 
-          {user && user.role === "admin" && (
+          {user?.role === "admin" ? (
             <Link
-              href={isAdmin ? "/dashboard" : "/admin"}
-              className="btn btn-sm btn-ghost"
+              href={viewHref}
+              className={`btn btn-sm btn-ghost ${styles.desktopAction}`}
             >
-              {isAdmin ? "User View" : "Admin"}
+              {viewLabel}
             </Link>
-          )}
+          ) : null}
 
           <button
             className="btn btn-icon btn-ghost btn-sm"
-            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-            title="Toggle theme"
+            type="button"
+            onClick={() =>
+              setTheme(resolvedTheme === "dark" ? "light" : "dark")
+            }
+            aria-label="Toggle color theme"
           >
-            {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+            <Sun className={styles.themeIconSun} size={18} aria-hidden="true" />
+            <Moon className={styles.themeIconMoon} size={18} aria-hidden="true" />
           </button>
 
           {user ? (
             <div className={styles.userMenu}>
               <div className={styles.avatar}>
-                {user.avatar_url ? (
-                  <Image src={user.avatar_url} alt={user.full_name} width={32} height={32} />
+                {avatarUrl ? (
+                  <Image
+                    src={avatarUrl}
+                    alt={`${user.full_name}'s avatar`}
+                    width={32}
+                    height={32}
+                  />
                 ) : (
-                  <User size={18} />
+                  <User size={18} aria-hidden="true" />
                 )}
               </div>
               <span className={styles.userName}>{user.full_name}</span>
               <button
                 className="btn btn-icon btn-ghost btn-sm"
-                onClick={logout}
-                title="Logout"
+                type="button"
+                onClick={() => {
+                  setLogoutError("");
+                  setIsLoggingOut(true);
+                  void logout()
+                    .catch(() => {
+                      setLogoutError(
+                        "Could not log out. Check your connection and try again."
+                      );
+                    })
+                    .finally(() => setIsLoggingOut(false));
+                }}
+                aria-label="Log out"
+                disabled={isLoggingOut}
               >
-                <LogOut size={18} />
+                <LogOut size={18} aria-hidden="true" />
               </button>
             </div>
           ) : (
@@ -140,8 +187,70 @@ export default function Header() {
               Sign In
             </Link>
           )}
+
+          {user ? (
+            <button
+              type="button"
+              className={`btn btn-icon btn-ghost btn-sm ${styles.menuButton}`}
+              onClick={() => setOpenMenuPath(menuOpen ? null : pathname)}
+              aria-expanded={menuOpen}
+              aria-controls="mobile-navigation"
+              aria-label={menuOpen ? "Close navigation menu" : "Open navigation menu"}
+            >
+              {menuOpen ? (
+                <X size={20} aria-hidden="true" />
+              ) : (
+                <Menu size={20} aria-hidden="true" />
+              )}
+            </button>
+          ) : null}
         </div>
       </div>
+
+      {user && menuOpen ? (
+        <nav
+          id="mobile-navigation"
+          className={styles.mobileNav}
+          aria-label={isAdmin ? "Admin mobile navigation" : "Mobile navigation"}
+        >
+          {navigation.map((item) => {
+            const active = isNavigationItemActive(pathname, item);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`${styles.mobileNavLink} ${active ? styles.active : ""}`}
+                aria-current={active ? "page" : undefined}
+                onClick={closeMenu}
+              >
+                {item.label}
+              </Link>
+            );
+          })}
+
+          {!isAdmin ? (
+            <a
+              href="mailto:vannguyen.tran.164@gmail.com?subject=OnlySpeak%20Feedback"
+              className={styles.mobileNavLink}
+              onClick={closeMenu}
+            >
+              <Mail size={16} aria-hidden="true" />
+              Feedback
+            </a>
+          ) : null}
+
+          {user.role === "admin" ? (
+            <Link href={viewHref} className={styles.mobileNavLink} onClick={closeMenu}>
+              {viewLabel}
+            </Link>
+          ) : null}
+        </nav>
+      ) : null}
+      {logoutError ? (
+        <div className={styles.headerError} role="alert">
+          {logoutError}
+        </div>
+      ) : null}
     </header>
   );
 }

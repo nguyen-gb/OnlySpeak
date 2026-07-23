@@ -265,6 +265,26 @@
     flex-direction: column;
     align-items: stretch;
   }
+
+  .convCard > :global(.btn) {
+    width: 100%;
+  }
+
+  .convTitleRow,
+  .convMeta,
+  .masteryMeta {
+    flex-wrap: wrap;
+  }
+
+  .masteryHint {
+    align-items: flex-start !important;
+    flex-basis: 100%;
+    flex-direction: column;
+  }
+
+  .roleProgressInline {
+    margin-left: 0;
+  }
 }
 
 .backSkeleton {
@@ -349,5 +369,22 @@
 @media (max-width: 640px) {
   .convButtonSkeleton {
     width: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .topicHeader {
+    align-items: flex-start;
+    gap: 14px;
+  }
+
+  .topicIconBig {
+    width: 60px;
+    height: 60px;
+    font-size: 36px;
+  }
+
+  .topicHeader h1 {
+    font-size: 24px;
   }
 }

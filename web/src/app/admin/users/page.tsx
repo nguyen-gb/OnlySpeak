@@ -2,23 +2,30 @@
 
 import { useState } from "react";
 import { useAdminUsers, useAdminToggleUser } from "@/hooks/useApi";
-import { Users, Shield, Ban, Check, AlertCircle } from "lucide-react";
+import { Shield, Ban, Check, AlertCircle, UserRoundX } from "lucide-react";
+import { getErrorMessage } from "@/lib/api";
+import { PageLoader, QueryError } from "@/components/QueryState";
 
 export default function AdminUsersPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [page, setPage] = useState(0);
 
-  const { data: rawUsers, isLoading: loading } = useAdminUsers();
-  const users = (rawUsers || []) as any[];
+  const usersQuery = useAdminUsers(page);
+  const users = usersQuery.data?.items ?? [];
+  const totalUsers = usersQuery.data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalUsers / 25));
+  const loading = usersQuery.isLoading;
   const toggleMutation = useAdminToggleUser();
 
   const handleToggle = async (userId: string) => {
+    setError("");
+    setSuccess("");
     try {
       await toggleMutation.mutateAsync(userId);
       setSuccess("User status updated!");
-      setTimeout(() => setSuccess(""), 3000);
-    } catch (err: any) {
-      setError(err.message || "Failed to update status");
+    } catch (err: unknown) {
+      setError(getErrorMessage(err));
     }
   };
 
@@ -29,16 +36,33 @@ export default function AdminUsersPage() {
         <p>Manage registered users</p>
       </div>
 
-      {success && <div className="alert alert-success" style={{ marginBottom: 16 }}><Check size={16} />{success}</div>}
-      {error && <div className="alert alert-error" style={{ marginBottom: 16 }}><AlertCircle size={16} />{error}</div>}
+      {success && <div className="alert alert-success" role="status" style={{ marginBottom: 16 }}><Check size={16} aria-hidden="true" />{success}</div>}
+      {error && <div className="alert alert-error" role="alert" style={{ marginBottom: 16 }}><AlertCircle size={16} aria-hidden="true" />{error}</div>}
 
-      {loading ? (
-        <div style={{ display: "flex", justifyContent: "center", padding: 60 }}>
-          <div className="spinner spinner-lg" />
+      {usersQuery.isError ? (
+        <QueryError
+          error={usersQuery.error}
+          onRetry={() => void usersQuery.refetch()}
+          title="Users are unavailable"
+        />
+      ) : loading ? (
+        <PageLoader label="Loading users" />
+      ) : users.length === 0 ? (
+        <div className="empty-state">
+          <UserRoundX size={64} aria-hidden="true" />
+          <h3>No users found</h3>
+          <p>Registered users will appear here.</p>
+          {page > 0 ? (
+            <button type="button" className="btn btn-secondary" onClick={() => setPage((current) => Math.max(0, current - 1))}>
+              Previous page
+            </button>
+          ) : null}
         </div>
       ) : (
-        <div className="table-wrapper">
-          <table className="table">
+        <>
+          <div className="table-wrapper">
+            <table className="table">
+            <caption className="sr-only">Registered users</caption>
             <thead>
               <tr>
                 <th>Name</th>
@@ -60,7 +84,7 @@ export default function AdminUsersPage() {
                   </td>
                   <td>
                     {u.role === "admin" ? (
-                      <span className="badge badge-warning"><Shield size={12} /> Admin</span>
+                      <span className="badge badge-warning"><Shield size={12} aria-hidden="true" /> Admin</span>
                     ) : (
                       <span className="badge badge-beginner">User</span>
                     )}
@@ -73,21 +97,43 @@ export default function AdminUsersPage() {
                     )}
                   </td>
                   <td style={{ fontSize: 13, color: "var(--text-tertiary)" }}>
-                    {new Date(u.created_at).toLocaleDateString()}
+                    <time dateTime={u.created_at}>{new Date(u.created_at).toLocaleDateString()}</time>
                   </td>
                   <td>
                     <button
                       className={`btn btn-sm ${u.is_active ? "btn-danger" : "btn-primary"}`}
                       onClick={() => handleToggle(u.id)}
+                      disabled={toggleMutation.isPending}
+                      aria-label={`${u.is_active ? "Disable" : "Enable"} ${u.full_name}`}
                     >
-                      {u.is_active ? <><Ban size={14} /> Disable</> : <><Check size={14} /> Enable</>}
+                      {u.is_active ? <><Ban size={14} aria-hidden="true" /> Disable</> : <><Check size={14} aria-hidden="true" /> Enable</>}
                     </button>
                   </td>
                 </tr>
               ))}
             </tbody>
-          </table>
-        </div>
+            </table>
+          </div>
+          <nav className="pagination" aria-label="User pages">
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              disabled={page === 0 || usersQuery.isFetching}
+              onClick={() => setPage((current) => Math.max(0, current - 1))}
+            >
+              Previous
+            </button>
+            <span>Page {page + 1} of {totalPages} · {totalUsers} users</span>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              disabled={page + 1 >= totalPages || usersQuery.isFetching}
+              onClick={() => setPage((current) => current + 1)}
+            >
+              Next
+            </button>
+          </nav>
+        </>
       )}
     </div>
   );
