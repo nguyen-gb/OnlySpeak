@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import runpy
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
@@ -9,10 +10,11 @@ from fastapi import HTTPException
 from fastapi import Response
 from pydantic import ValidationError
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from starlette.requests import Request
 
-from app.api.auth import refresh
+from app.api.auth import _find_google_account, google_login, refresh
 from app.api.admin import (
     delete_line,
     list_conversations,
@@ -30,6 +32,8 @@ from app.api.progress import (
 )
 from app.database import Base, configure_sqlite_engine
 from app.models import (
+    AuthProvider,
+    AuthSession,
     Conversation,
     ConversationLine,
     Level,
@@ -38,10 +42,10 @@ from app.models import (
     Topic,
     User,
     UserProgress,
-    AuthSession,
 )
 from app.schemas.conversation import ConversationCreate, ConversationUpdate
 from app.schemas.progress import ProgressCreate
+from app.schemas.user import GoogleLogin
 from app.config import settings
 from app.services.auth_service import create_refresh_token, hash_refresh_token
 
@@ -220,6 +224,167 @@ def test_progress_is_idempotent_and_incomplete_attempts_do_not_reward():
                 with pytest.raises(HTTPException) as invalid_count:
                     await save_progress(forged, db, user)
                 assert invalid_count.value.status_code == 422
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_google_login_upgrades_legacy_linked_local_account():
+    async def scenario():
+        engine, sessions = await _new_database()
+        try:
+            async with sessions() as db:
+                user = User(
+                    email="legacy-google@example.com",
+                    full_name="Legacy Google User",
+                    provider=AuthProvider.LOCAL,
+                    provider_id="legacy-google-subject",
+                    password_hash="obsolete-password-hash",
+                )
+                db.add(user)
+                await db.commit()
+
+                request = Request(
+                    {
+                        "type": "http",
+                        "method": "POST",
+                        "path": "/api/auth/google",
+                        "headers": [],
+                        "query_string": b"",
+                        "server": ("testserver", 80),
+                        "client": ("127.0.0.1", 1234),
+                        "scheme": "http",
+                    }
+                )
+                response = Response()
+                google_identity = {
+                    "email": user.email,
+                    "name": user.full_name,
+                    "picture": "",
+                    "sub": "legacy-google-subject",
+                }
+
+                with (
+                    patch(
+                        "app.api.auth.verify_google_token",
+                        AsyncMock(return_value=google_identity),
+                    ),
+                    patch(
+                        "app.api.auth.rate_limiter.check",
+                        AsyncMock(return_value=None),
+                    ),
+                ):
+                    result = await google_login(
+                        GoogleLogin(token="x" * 20),
+                        request,
+                        response,
+                        db,
+                    )
+
+                await db.refresh(user)
+                assert result.user.id == user.id
+                assert user.provider == AuthProvider.GOOGLE
+                assert user.provider_id == "legacy-google-subject"
+                assert user.password_hash is None
+                assert await db.scalar(select(func.count(AuthSession.id))) == 1
+                assert len(response.headers.getlist("set-cookie")) == 2
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_google_account_lookup_uses_stable_subject_before_changed_email():
+    async def scenario():
+        engine, sessions = await _new_database()
+        try:
+            async with sessions() as db:
+                user = User(
+                    email="old-address@example.com",
+                    full_name="Returning Google User",
+                    provider=AuthProvider.GOOGLE,
+                    provider_id="stable-google-subject",
+                )
+                db.add(user)
+                await db.commit()
+
+                found = await _find_google_account(
+                    db,
+                    "new-address@example.com",
+                    "stable-google-subject",
+                )
+                await db.commit()
+
+                assert found is not None
+                assert found.id == user.id
+                assert found.email == "new-address@example.com"
+                assert await db.scalar(select(func.count(User.id))) == 1
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_google_account_lookup_does_not_merge_email_collision():
+    async def scenario():
+        engine, sessions = await _new_database()
+        try:
+            async with sessions() as db:
+                subject_user = User(
+                    email="old-address@example.com",
+                    full_name="Subject User",
+                    provider=AuthProvider.GOOGLE,
+                    provider_id="stable-google-subject",
+                )
+                email_owner = User(
+                    email="new-address@example.com",
+                    full_name="Email Owner",
+                    provider=AuthProvider.LOCAL,
+                )
+                db.add_all([subject_user, email_owner])
+                await db.commit()
+
+                with pytest.raises(HTTPException) as collision:
+                    await _find_google_account(
+                        db,
+                        email_owner.email,
+                        "stable-google-subject",
+                    )
+
+                assert collision.value.status_code == 409
+                assert subject_user.email == "old-address@example.com"
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_database_rejects_duplicate_google_identity():
+    async def scenario():
+        engine, sessions = await _new_database()
+        try:
+            async with sessions() as db:
+                db.add_all(
+                    [
+                        User(
+                            email="first-google@example.com",
+                            full_name="First Google User",
+                            provider=AuthProvider.GOOGLE,
+                            provider_id="duplicate-google-subject",
+                        ),
+                        User(
+                            email="second-google@example.com",
+                            full_name="Second Google User",
+                            provider=AuthProvider.GOOGLE,
+                            provider_id="duplicate-google-subject",
+                        ),
+                    ]
+                )
+
+                with pytest.raises(IntegrityError):
+                    await db.commit()
+                await db.rollback()
         finally:
             await engine.dispose()
 

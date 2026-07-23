@@ -69,6 +69,8 @@ npm run build
 - Use a unique random `SECRET_KEY`; changing it signs every user out.
 - The revocable-session migration intentionally invalidates JWTs issued by
   older versions once; users sign in again after that deployment.
+- The auth-identity migration upgrades legacy Google-linked `LOCAL` users and
+  rejects duplicate Google subjects rather than merging user data implicitly.
 - Keep the API and web app on the same site when using `COOKIE_SAMESITE=lax`.
   For a genuinely cross-site deployment, use `COOKIE_SAMESITE=none` only over
   HTTPS and review CSRF controls before release.

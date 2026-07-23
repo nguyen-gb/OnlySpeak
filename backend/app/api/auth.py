@@ -111,17 +111,88 @@ async def _check_auth_rate_limit(request: Request, action: str) -> None:
         ) from None
 
 
-def _validate_google_account(user: User, provider_id: str) -> None:
-    if user.provider != AuthProvider.GOOGLE:
+def _link_verified_google_account(user: User, provider_id: str) -> None:
+    """Validate an existing Google link or upgrade a legacy local account.
+
+    Email/password login is no longer available. Older releases nevertheless
+    left users as LOCAL after a successful Google login and only populated
+    provider_id. Only that exact legacy subject match is upgraded: a verified
+    email alone is not sufficient proof for linking an unlinked local account.
+    """
+
+    if not user.provider_id:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="This account uses a different sign-in provider",
+            detail="This account is not linked to Google",
         )
-    if user.provider_id and user.provider_id != provider_id:
+    if user.provider_id != provider_id:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Google account does not match the linked account",
         )
+    if user.provider == AuthProvider.LOCAL:
+        user.provider = AuthProvider.GOOGLE
+        user.password_hash = None
+    elif user.provider != AuthProvider.GOOGLE:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This account cannot be linked to Google",
+        )
+    user.provider_id = provider_id
+
+
+async def _find_google_account(
+    db: AsyncSession,
+    email: str,
+    provider_id: str,
+) -> User | None:
+    """Resolve a returning Google user by stable subject before mutable email."""
+
+    subject_matches = list(
+        (
+            await db.execute(
+                select(User)
+                .options(noload(User.progress))
+                .where(User.provider_id == provider_id)
+                .order_by(User.created_at)
+                .limit(2)
+                .with_for_update()
+            )
+        ).scalars()
+    )
+    if len(subject_matches) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Multiple accounts are linked to this Google identity",
+        )
+
+    subject_user = subject_matches[0] if subject_matches else None
+    if subject_user is not None:
+        if subject_user.email != email:
+            email_owner = (
+                await db.execute(
+                    select(User)
+                    .options(noload(User.progress))
+                    .where(User.email == email)
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            if email_owner is not None and email_owner.id != subject_user.id:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="The Google email belongs to another account",
+                )
+            subject_user.email = email
+        return subject_user
+
+    return (
+        await db.execute(
+            select(User)
+            .options(noload(User.progress))
+            .where(User.email == email)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -213,12 +284,11 @@ async def google_login(
             detail="Invalid Google token",
         )
 
-    result = await db.execute(
-        select(User)
-        .options(noload(User.progress))
-        .where(User.email == google_data["email"])
+    user = await _find_google_account(
+        db,
+        google_data["email"],
+        google_data["sub"],
     )
-    user = result.scalar_one_or_none()
 
     if not user:
         user = User(
@@ -232,21 +302,21 @@ async def google_login(
         try:
             await db.commit()
         except IntegrityError:
-            # Concurrent first logins can race on the unique email constraint.
+            # Concurrent first logins can race on either the unique email or
+            # external-provider identity constraint.
             await db.rollback()
-            result = await db.execute(
-                select(User)
-                .options(noload(User.progress))
-                .where(User.email == google_data["email"])
+            user = await _find_google_account(
+                db,
+                google_data["email"],
+                google_data["sub"],
             )
-            user = result.scalar_one_or_none()
             if not user:
                 raise
-            _validate_google_account(user, google_data["sub"])
+            _link_verified_google_account(user, google_data["sub"])
         else:
             await db.refresh(user)
     else:
-        _validate_google_account(user, google_data["sub"])
+        _link_verified_google_account(user, google_data["sub"])
 
     if not user.is_active:
         raise HTTPException(
@@ -255,8 +325,15 @@ async def google_login(
         )
 
     user.avatar_url = google_data["picture"][:500] or user.avatar_url
-    user.provider_id = user.provider_id or google_data["sub"]
-    await db.commit()
+    user.provider_id = google_data["sub"]
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Google account conflicts with an existing account",
+        ) from exc
     await db.refresh(user)
     return await _issue_new_session(response, user, db)
 

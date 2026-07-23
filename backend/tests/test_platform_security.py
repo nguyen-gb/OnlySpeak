@@ -14,9 +14,14 @@ from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import ValidationError
 from starlette.requests import Request
 
-from app.api.auth import _clear_auth_cookies, _set_auth_cookies
+from app.api.auth import (
+    _clear_auth_cookies,
+    _link_verified_google_account,
+    _set_auth_cookies,
+)
 from app.api.deps import get_current_user
 from app.config import Settings
+from app.models.user import AuthProvider, User
 from app.schemas.chat import FreeTalkRequest
 from app.schemas.user import UserUpdate
 from app.services.auth_service import (
@@ -162,6 +167,65 @@ class AuthenticationDependencyTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(HTTPException) as raised:
             await get_current_user(request, credentials, DatabaseMustNotBeUsed())
         self.assertEqual(raised.exception.status_code, 401)
+
+
+class GoogleAccountLinkingTests(unittest.TestCase):
+    def test_verified_google_login_upgrades_legacy_local_account(self) -> None:
+        user = User(
+            email="learner@example.com",
+            full_name="Learner",
+            provider=AuthProvider.LOCAL,
+            provider_id="google-subject",
+            password_hash="legacy-password-hash",
+        )
+
+        _link_verified_google_account(user, "google-subject")
+
+        self.assertEqual(user.provider, AuthProvider.GOOGLE)
+        self.assertEqual(user.provider_id, "google-subject")
+        self.assertIsNone(user.password_hash)
+
+    def test_verified_google_login_cannot_claim_unlinked_local_email(self) -> None:
+        user = User(
+            email="learner@example.com",
+            full_name="Learner",
+            provider=AuthProvider.LOCAL,
+            provider_id=None,
+        )
+
+        with self.assertRaises(HTTPException) as raised:
+            _link_verified_google_account(user, "google-subject")
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(user.provider, AuthProvider.LOCAL)
+        self.assertIsNone(user.provider_id)
+
+    def test_google_subject_mismatch_is_still_rejected(self) -> None:
+        user = User(
+            email="learner@example.com",
+            full_name="Learner",
+            provider=AuthProvider.GOOGLE,
+            provider_id="original-google-subject",
+        )
+
+        with self.assertRaises(HTTPException) as raised:
+            _link_verified_google_account(user, "different-google-subject")
+
+        self.assertEqual(raised.exception.status_code, 409)
+
+    def test_google_row_without_subject_cannot_be_claimed_by_email(self) -> None:
+        user = User(
+            email="learner@example.com",
+            full_name="Learner",
+            provider=AuthProvider.GOOGLE,
+            provider_id=None,
+        )
+
+        with self.assertRaises(HTTPException) as raised:
+            _link_verified_google_account(user, "google-subject")
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertIsNone(user.provider_id)
 
 
 class CookieSecurityTests(unittest.TestCase):
